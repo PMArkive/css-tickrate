@@ -1,0 +1,129 @@
+name: CMake on multiple platforms
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - v*
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ${{matrix.os}}
+
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+        arch: [x86_64, x86]
+        build_type: [Release]
+        c_compiler: [gcc, cl]
+        include:
+          - os: windows-latest
+            arch: x86_64
+            c_compiler: cl
+            cpp_compiler: cl
+            cmake_generator: "Visual Studio 17 2022"
+            cmake_arch: "x64"
+          - os: windows-latest
+            arch: x86
+            c_compiler: cl
+            cpp_compiler: cl
+            cmake_generator: "Visual Studio 17 2022"
+            cmake_arch: "Win32"
+          - os: ubuntu-24.04
+            arch: x86_64
+            c_compiler: gcc
+            cpp_compiler: g++
+            c_flags: "-m64"
+            cxx_flags: "-m64"
+          - os: ubuntu-24.04
+            arch: x86
+            c_compiler: gcc
+            cpp_compiler: g++
+            c_flags: "-m32"
+            cxx_flags: "-m32"
+        exclude:
+          - os: windows-latest
+            c_compiler: gcc
+          - os: windows-latest
+            c_compiler: clang
+          - os: ubuntu-24.04
+            c_compiler: cl
+
+    steps:
+      - uses: actions/checkout@v4.2.2
+
+      - name: Install 32-bit dependencies (Ubuntu)
+        if: matrix.os == 'ubuntu-24.04' && matrix.arch == 'x86'
+        run: sudo apt-get update && sudo apt-get install -y g++-multilib
+
+      - name: Set environment variables
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            echo "TR_INSTALL_DIR=C:/install" >> "$GITHUB_ENV"
+            echo "TR_ZIP_FILENAME=css-tickrate-release-windows-${{matrix.arch}}" >> "$GITHUB_ENV"
+          else
+            echo "TR_INSTALL_DIR=$HOME/install" >> "$GITHUB_ENV"
+            echo "TR_ZIP_FILENAME=css-tickrate-release-linux-${{matrix.arch}}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Set reusable strings
+        id: strings
+        shell: bash
+        run: |
+          echo "build-output-dir=${{github.workspace}}/build" >> "$GITHUB_OUTPUT"
+
+      - name: Configure CMake (Windows)
+        if: matrix.os == 'windows-latest'
+        run: >
+          cmake -G "${{matrix.cmake_generator}}" -A ${{matrix.cmake_arch}}
+          -B ${{steps.strings.outputs.build-output-dir}}
+          -DCMAKE_CXX_COMPILER=${{matrix.cpp_compiler}}
+          -DCMAKE_C_COMPILER=${{matrix.c_compiler}}
+          -DCMAKE_BUILD_TYPE=${{matrix.build_type}}
+          -DCMAKE_INSTALL_PREFIX=${{env.TR_INSTALL_DIR}}
+          -S ${{github.workspace}}
+
+      - name: Configure CMake (Ubuntu)
+        if: matrix.os == 'ubuntu-24.04'
+        run: >
+          cmake -B ${{steps.strings.outputs.build-output-dir}}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler}}
+          -DCMAKE_C_COMPILER=${{ matrix.c_compiler}}
+          -DCMAKE_C_FLAGS=${{matrix.c_flags}}
+          -DCMAKE_CXX_FLAGS=${{matrix.cxx_flags}}
+          -DCMAKE_BUILD_TYPE=${{matrix.build_type}}
+          -DCMAKE_INSTALL_PREFIX=${{env.TR_INSTALL_DIR}}
+          -S ${{github.workspace}}
+
+      - name: Build
+        run: cmake --build ${{steps.strings.outputs.build-output-dir}} --config ${{matrix.build_type}}
+
+      - name: Install
+        run: cmake --install ${{steps.strings.outputs.build-output-dir}} --config ${{matrix.build_type}}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4.6.1
+        with:
+          name: ${{env.TR_ZIP_FILENAME}}
+          path: ${{env.TR_INSTALL_DIR}}/*
+
+      - name: Archive Release
+        uses: thedoctor0/zip-release@0.7.5
+        with:
+          type: zip
+          filename: ${{env.TR_ZIP_FILENAME}}.zip
+          directory: ${{env.TR_INSTALL_DIR}}
+          path: addons
+
+      - name: Release
+        uses: softprops/action-gh-release@v2.2.1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          token: ${{secrets.RELEASE_TOKEN}}
+          prerelease: ${{contains(github.ref, '-pre')}}
+          files: |
+            ${{env.TR_INSTALL_DIR}}/${{env.TR_ZIP_FILENAME}}.zip
