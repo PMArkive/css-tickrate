@@ -24,7 +24,7 @@ Here are some examples (assuming a 64-bit OS):
     cmake --build cmake-build-x86_64 --config Release
     
 32-bit:
-    cmake -G "Visual Studio 17 2022" -A x64 -B cmake-build-x86_32
+    cmake -G "Visual Studio 17 2022" -A Win32 -B cmake-build-x86_32
     cmake --build cmake-build-x86_32 --config Release
 ```
 
