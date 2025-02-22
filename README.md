@@ -2,21 +2,21 @@
 
 A **Counter-Strike: Source** server addon that enables the `-tickrate` command line parameter.
 
-### Usage & Installation
+## Usage & Installation
 
 Download a release zip from [here](https://github.com/angelfor3v3r/css-tickrate/releases) and extract the `addons`
 folder into your server's `cstrike` folder (**The Linux releases provided require `GLIBC 2.38`**).
 
 You can now pass `-tickrate <Desired Tickrate>` on the command line.
 
-### Building
+## Building
 
 If the releases don't fit your needs then you can build the library yourself.\
 Building requires **CMake** and a **C++23** ready compiler.
 
 Here are some examples (assuming a 64-bit OS):
 
-#### Windows (MSVC):
+### Windows (MSVC):
 
 ```
 64-bit:
@@ -28,7 +28,7 @@ Here are some examples (assuming a 64-bit OS):
     cmake --build cmake-build-x86_32 --config Release
 ```
 
-#### Linux (GCC):
+### Linux (GCC):
 
 ```
 64-bit: 
@@ -40,7 +40,7 @@ Here are some examples (assuming a 64-bit OS):
     cmake --build cmake-build-x86_32 --config Release
 ```
 
-### Thanks
+## Thanks
 [SafetyHook](https://github.com/cursey/safetyhook)\
 [Zydis](https://github.com/zyantific/zydis)\
 [{fmt}](https://github.com/fmtlib/fmt)\
