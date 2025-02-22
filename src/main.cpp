@@ -434,12 +434,14 @@ TickratePlugin g_tickrate_plugin{};
 extern "C" TR_DLLEXPORT void *CreateInterface(const char *name, i32 *return_code) noexcept
 {
     // First call should be the latest version.
-    if (static bool once{}; !std::exchange(once, true) && std::string_view{name}.contains("ISERVERPLUGINCALLBACKS"))
+    if (static bool once{}; !once && std::string_view{name}.contains("ISERVERPLUGINCALLBACKS"))
     {
         if (return_code != nullptr)
         {
             *return_code = IFACE_OK;
         }
+
+        once = true;
 
         return &g_tickrate_plugin;
     }
