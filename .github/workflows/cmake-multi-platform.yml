@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [ubuntu-20.04, windows-latest]
+        os: [ubuntu-22.04, windows-latest]
         arch: [x86_64, x86]
         build_type: [Release]
         c_compiler: [gcc, cl]
@@ -32,13 +32,13 @@ jobs:
             cpp_compiler: cl
             cmake_generator: "Visual Studio 17 2022"
             cmake_arch: "Win32"
-          - os: ubuntu-20.04
+          - os: ubuntu-22.04
             arch: x86_64
             c_compiler: gcc
             cpp_compiler: g++
             c_flags: "-m64"
             cxx_flags: "-m64"
-          - os: ubuntu-20.04
+          - os: ubuntu-22.04
             arch: x86
             c_compiler: gcc
             cpp_compiler: g++
@@ -49,14 +49,14 @@ jobs:
             c_compiler: gcc
           - os: windows-latest
             c_compiler: clang
-          - os: ubuntu-20.04
+          - os: ubuntu-22.04
             c_compiler: cl
 
     steps:
       - uses: actions/checkout@v4.2.2
 
       - name: Install 32-bit dependencies (Ubuntu)
-        if: matrix.os == 'ubuntu-20.04' && matrix.arch == 'x86'
+        if: matrix.os == 'ubuntu-22.04' && matrix.arch == 'x86'
         run: sudo apt-get update && sudo apt-get install -y g++-multilib
 
       - name: Set environment variables
@@ -88,7 +88,7 @@ jobs:
           -S ${{github.workspace}}
 
       - name: Configure CMake (Ubuntu)
-        if: matrix.os == 'ubuntu-20.04'
+        if: matrix.os == 'ubuntu-22.04'
         run: >
           cmake -B ${{steps.strings.outputs.build-output-dir}}
           -DCMAKE_CXX_COMPILER=${{ matrix.cpp_compiler}}
