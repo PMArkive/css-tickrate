@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.15)
 
 project(css_tickrate
     VERSION 1.0.0
@@ -31,13 +31,15 @@ CPMAddPackage(NAME zydis
     "ZYDIS_FEATURE_ENCODER OFF"
     "ZYDIS_BUILD_TOOLS OFF"
     "ZYDIS_BUILD_EXAMPLES OFF")
-CPMAddPackage("gh:cursey/safetyhook@0.6.0")
+CPMAddPackage("gh:TartanLlama/expected@1.1.0")
 
 set(css_tickrate_headers
     src/common.hpp
     src/type.hpp
-    src/os.hpp)
+    src/os.hpp
+    src/safetyhook/safetyhook.hpp)
 set(css_tickrate_sources
+    src/safetyhook/safetyhook.cpp
     src/main.cpp)
 
 if (WIN32)
@@ -50,8 +52,8 @@ endif ()
 
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${css_tickrate_headers} ${css_tickrate_sources})
 add_library(css_tickrate SHARED ${css_tickrate_headers} ${css_tickrate_sources})
-target_compile_features(css_tickrate PRIVATE cxx_std_23)
-target_link_libraries(css_tickrate PRIVATE Zydis fmt::fmt safetyhook::safetyhook)
+target_compile_features(css_tickrate PRIVATE cxx_std_17)
+target_link_libraries(css_tickrate PRIVATE Zydis tl::expected fmt::fmt)
 
 if (WIN32)
     if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")

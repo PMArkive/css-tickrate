@@ -1,11 +1,12 @@
 #include "common.hpp"
 #include "type.hpp"
 #include "os.hpp"
+#include "safetyhook/safetyhook.hpp"
+#include <tl/expected.hpp>
 #include <fmt/format.h>
+#include <Zycore/Status.h>
 #include <Zydis/Zydis.h>
-#include <safetyhook.hpp>
 #include <string_view>
-#include <expected>
 
 using CreateInterfaceFn      = void *(TR_CCALL *)(const char *name, i32 *return_code);
 using InstantiateInterfaceFn = void *(TR_CCALL *)();
@@ -47,10 +48,59 @@ struct DisasmResult
 struct DisasmError
 {
     u8        *ip{};
-    ZyanStatus error{ZYAN_STATUS_SUCCESS};
+    ZyanStatus status{ZYAN_STATUS_FAILED};
 };
 
-[[nodiscard]] std::expected<DisasmResult, DisasmError> disasm(u8 *ip, usize len = ZYDIS_MAX_INSTRUCTION_LENGTH) noexcept
+[[nodiscard]] std::string_view zyanstatus_to_str(ZyanStatus status) noexcept
+{
+    constexpr const char *strings_zycore[] = {/* 00 */ "SUCCESS",
+                                              /* 01 */ "FAILED",
+                                              /* 02 */ "TRUE",
+                                              /* 03 */ "FALSE",
+                                              /* 04 */ "INVALID_ARGUMENT",
+                                              /* 05 */ "INVALID_OPERATION",
+                                              /* 06 */ "NOT_FOUND",
+                                              /* 07 */ "OUT_OF_RANGE",
+                                              /* 08 */ "INSUFFICIENT_BUFFER_SIZE",
+                                              /* 09 */ "NOT_ENOUGH_MEMORY",
+                                              /* 0A */ "NOT_ENOUGH_MEMORY",
+                                              /* 0B */ "BAD_SYSTEMCALL"};
+
+    constexpr const char *strings_zydis[] = {/* 00 */ "NO_MORE_DATA",
+                                             /* 01 */ "DECODING_ERROR",
+                                             /* 02 */ "INSTRUCTION_TOO_LONG",
+                                             /* 03 */ "BAD_REGISTER",
+                                             /* 04 */ "ILLEGAL_LOCK",
+                                             /* 05 */ "ILLEGAL_LEGACY_PFX",
+                                             /* 06 */ "ILLEGAL_REX",
+                                             /* 07 */ "INVALID_MAP",
+                                             /* 08 */ "MALFORMED_EVEX",
+                                             /* 09 */ "MALFORMED_MVEX",
+                                             /* 0A */ "INVALID_MASK",
+                                             /* 0B */ "SKIP_TOKEN",
+                                             /* 0C */ "IMPOSSIBLE_INSTRUCTION"};
+
+    // if (ZYAN_STATUS_MODULE(status) >= ZYAN_MODULE_USER)
+    // {
+    //     return "User";
+    // }
+
+    if (ZYAN_STATUS_MODULE(status) == ZYAN_MODULE_ZYCORE)
+    {
+        status = ZYAN_STATUS_CODE(status);
+        return status < std::size(strings_zycore) ? strings_zycore[status] : "";
+    }
+
+    if (ZYAN_STATUS_MODULE(status) == ZYAN_MODULE_ZYDIS)
+    {
+        status = ZYAN_STATUS_CODE(status);
+        return status < std::size(strings_zydis) ? strings_zydis[status] : "";
+    }
+
+    return "";
+}
+
+[[nodiscard]] tl::expected<DisasmResult, DisasmError> disasm(u8 *ip, usize len = ZYDIS_MAX_INSTRUCTION_LENGTH) noexcept
 {
     static ZydisDecoder decoder;
     if (static bool once{}; !once)
@@ -62,7 +112,7 @@ struct DisasmError
 #endif
         if (!ZYAN_SUCCESS(status))
         {
-            return std::unexpected{DisasmError{ip, status}};
+            return tl::unexpected{DisasmError{ip, status}};
         }
 
         once = true;
@@ -72,7 +122,7 @@ struct DisasmError
     auto         status = ZydisDecoderDecodeFull(&decoder, ip, len, &result.ix, result.operands);
     if (!ZYAN_SUCCESS(status))
     {
-        return std::unexpected{DisasmError{ip, status}};
+        return tl::unexpected{DisasmError{ip, status}};
     }
 
     result.ip = ip;
@@ -81,7 +131,7 @@ struct DisasmError
 }
 
 template <class Pred>
-std::expected<DisasmResult, DisasmError> disasm_for_each(u8 *ip, usize len, Pred &&pred) noexcept
+tl::expected<DisasmResult, DisasmError> disasm_for_each(u8 *ip, usize len, Pred &&pred) noexcept
 {
     u8 *end = ip + len;
 
@@ -90,7 +140,7 @@ std::expected<DisasmResult, DisasmError> disasm_for_each(u8 *ip, usize len, Pred
         auto result = disasm(i, (usize)(end - i));
         if (!result.has_value())
         {
-            return std::unexpected{result.error()};
+            return tl::unexpected{result.error()};
         }
 
         auto &&value = result.value();
@@ -102,10 +152,11 @@ std::expected<DisasmResult, DisasmError> disasm_for_each(u8 *ip, usize len, Pred
         i += value.ix.length;
     }
 
-    return {};
+    // This means we've scanned everything successfully but the predicate didn't return.
+    return tl::unexpected{DisasmError{ip, ZYDIS_STATUS_NO_MORE_DATA}};
 }
 
-template <class T>
+template <class T = u8 *>
 T get_virtual(const void *object, u16 index) noexcept
 {
     return (*(T **)object)[index];
@@ -209,7 +260,7 @@ class Hooked_CServerGameDLL : public CServerGameDLL
 public:
     f32 hooked_GetTickInterval() const noexcept
     {
-        f32 interval = 1.0f / g_desired_tickrate;
+        f32 interval = 1.0f / (f32)g_desired_tickrate;
 
         return interval;
     }
@@ -288,7 +339,7 @@ public:
             auto thunk_disasm_result = disasm(createinterface);
             if (!thunk_disasm_result.has_value())
             {
-                warn("Failed to decode first instruction in \"CreateInterface\".\n");
+                warn("Failed to decode first instruction in \"CreateInterface\": %s\n", zyanstatus_to_str(thunk_disasm_result.error().status).data());
                 return false;
             }
 
@@ -308,7 +359,7 @@ public:
             ZYDIS_MAX_INSTRUCTION_LENGTH * 20,
             [](auto &&result) noexcept
             {
-                // x86-64 is RIP-relative. 32-bit is absolute.
+                // x86-64 is RIP-relative. x86-32 is absolute.
                 constexpr ZyanU16       op_size  = TR_ARCH_X86_64 == 1 ? 64 : 32;
                 constexpr ZydisRegister mem_base = TR_ARCH_X86_64 == 1 ? ZYDIS_REGISTER_RIP : ZYDIS_REGISTER_NONE;
 
@@ -319,13 +370,13 @@ public:
             });
         if (!regs_disasm_result.has_value())
         {
-            warn("Failed to find instruction containing \"s_pInterfaceRegs\".\n");
+            warn("Failed to find instruction containing \"s_pInterfaceRegs\": %s\n", zyanstatus_to_str(regs_disasm_result.error().status).data());
             return false;
         }
 
         auto &regs_disasm = regs_disasm_result.value();
 
-        // x86-64 is RIP-relative. 32-bit is absolute.
+        // x86-64 is RIP-relative. x86-32 is absolute.
 #if TR_ARCH_X86_64
         regs = *(InterfaceReg **)(regs_disasm.ip + regs_disasm.ix.length + (i32)regs_disasm.operands[1].mem.disp.value);
 #else
@@ -347,7 +398,7 @@ public:
                 continue;
             }
 
-            if (std::string_view{it->m_pName}.contains("ServerGameDLL"))
+            if (std::string_view{it->m_pName}.find("ServerGameDLL") != std::string_view::npos)
             {
                 servergame = (CServerGameDLL *)it->m_CreateFn();
                 break;
@@ -434,7 +485,7 @@ TickratePlugin g_tickrate_plugin{};
 extern "C" TR_DLLEXPORT void *CreateInterface(const char *name, i32 *return_code) noexcept
 {
     // First call should be the latest version.
-    if (static bool once{}; !once && std::string_view{name}.contains("ISERVERPLUGINCALLBACKS"))
+    if (static bool once{}; !once && std::string_view{name}.find("ISERVERPLUGINCALLBACKS") != std::string_view::npos)
     {
         if (return_code != nullptr)
         {
