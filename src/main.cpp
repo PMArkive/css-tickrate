@@ -229,29 +229,19 @@ using Msg_fn     = void(TR_CCALL *)(const char *, ...);
 Warning_fn    g_Warning{};
 Msg_fn        g_Msg{};
 CCommandLine *g_cmdline{};
+i32           g_desired_tickrate{};
 SafetyHookVmt g_servergame_hook{};
 SafetyHookVm  g_GetTickInterval_hook{};
-i32           g_desired_tickrate{};
 
 template <class... Args>
 void warn(std::string_view fmt_str, Args &&...args) noexcept
 {
-    if (g_Warning == nullptr)
-    {
-        return;
-    }
-
     g_Warning("[CS:S Tickrate] [warning] %s", fmt::vformat(fmt_str, fmt::make_format_args(args...)).c_str());
 }
 
 template <class... Args>
 void info(std::string_view fmt_str, Args &&...args) noexcept
 {
-    if (g_Msg == nullptr)
-    {
-        return;
-    }
-
     g_Msg("[CS:S Tickrate] [info] %s", fmt::vformat(fmt_str, fmt::make_format_args(args...)).c_str());
 }
 
@@ -275,8 +265,6 @@ public:
 
     bool Load(CreateInterfaceFn interface_factory, CreateInterfaceFn gameserver_factory) noexcept override
     {
-        info("Loading...");
-
         constexpr std::string_view tier0_lib_name = TR_OS_WINDOWS == 1 ? "tier0.dll" : "libtier0_srv.so";
 
         auto tier0_lib = os_get_module(tier0_lib_name);
@@ -298,6 +286,8 @@ public:
             return false;
         }
 
+        info("Loading...\n");
+
         auto *CommandLine_Tier0 = os_get_procedure<CCommandLine *(TR_CCALL *)()>(tier0_lib, "CommandLine_Tier0");
         if (CommandLine_Tier0 == nullptr)
         {
@@ -312,6 +302,8 @@ public:
             return false;
         }
 
+        // info("CCommandLine = 0x{:X}\n", (usize)g_cmdline);
+
         // Just let the engine handle it if there's no command line parameter.
         if (g_cmdline->FindParm("-tickrate") == 0)
         {
@@ -322,7 +314,7 @@ public:
         g_desired_tickrate = g_cmdline->ParmValue("-tickrate", 0);
         if (g_desired_tickrate <= 10)
         {
-            warn("Failed to set tickrate: \"-tickrate\" command line parameter is too small ({}, <= 10).", g_desired_tickrate);
+            warn("Failed to set tickrate: \"-tickrate\" command line parameter is too small ({}, <= 10).\n", g_desired_tickrate);
             return false;
         }
 
@@ -389,6 +381,8 @@ public:
             return false;
         }
 
+        // info("Server \"s_pInterfaceRegs\" = 0x{:X}\n", (usize)regs);
+
         CServerGameDLL *servergame{};
 
         for (auto *it = regs; it != nullptr; it = it->m_pNext)
@@ -410,6 +404,8 @@ public:
             warn("Failed to find \"ServerGameDLL\" interface.\n");
             return false;
         }
+
+        // info("ServerGameDLL = 0x{:X}\n", (usize)servergame);
 
         g_servergame_hook      = safetyhook::create_vmt(servergame);
         g_GetTickInterval_hook = safetyhook::create_vm(g_servergame_hook, 10, &Hooked_CServerGameDLL::hooked_GetTickInterval);

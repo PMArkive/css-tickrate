@@ -5,7 +5,7 @@ A **Counter-Strike: Source** server addon that enables the `-tickrate` command l
 ## Usage & Installation
 
 Download a release zip from [here](https://github.com/angelfor3v3r/css-tickrate/releases) and extract the `addons`
-folder into your server's `cstrike` folder (**The Linux releases provided require `GLIBC 2.38`**).
+folder into your server's `cstrike` folder (**The Linux releases provided require a modern version of `GLIBC/GLIBCXX`**).
 
 You can now pass `-tickrate <Desired Tickrate>` on the command line.
 
