@@ -7,6 +7,7 @@
 #include <Zycore/Status.h>
 #include <Zydis/Zydis.h>
 #include <string_view>
+#include <array>
 
 using CreateInterfaceFn      = void *(TR_CCALL *)(const char *name, i32 *return_code);
 using InstantiateInterfaceFn = void *(TR_CCALL *)();
@@ -38,47 +39,47 @@ enum EQueryCvarValueStatus : i32
     eQueryCvarValueStatus_CvarProtected,
 };
 
-struct DisasmResult
+struct Disasm
 {
+    struct Error
+    {
+        u8        *ip{};
+        ZyanStatus status{ZYAN_STATUS_FAILED};
+    };
+
     u8                     *ip{};
     ZydisDecodedInstruction ix{};
     ZydisDecodedOperand     operands[ZYDIS_MAX_OPERAND_COUNT]{};
 };
 
-struct DisasmError
-{
-    u8        *ip{};
-    ZyanStatus status{ZYAN_STATUS_FAILED};
-};
-
 [[nodiscard]] std::string_view zyanstatus_to_str(ZyanStatus status) noexcept
 {
-    constexpr const char *strings_zycore[] = {/* 00 */ "SUCCESS",
-                                              /* 01 */ "FAILED",
-                                              /* 02 */ "TRUE",
-                                              /* 03 */ "FALSE",
-                                              /* 04 */ "INVALID_ARGUMENT",
-                                              /* 05 */ "INVALID_OPERATION",
-                                              /* 06 */ "NOT_FOUND",
-                                              /* 07 */ "OUT_OF_RANGE",
-                                              /* 08 */ "INSUFFICIENT_BUFFER_SIZE",
-                                              /* 09 */ "NOT_ENOUGH_MEMORY",
-                                              /* 0A */ "NOT_ENOUGH_MEMORY",
-                                              /* 0B */ "BAD_SYSTEMCALL"};
+    constexpr std::array<std::string_view, 12> strings_zycore = {/* 00 */ "SUCCESS",
+                                                                 /* 01 */ "FAILED",
+                                                                 /* 02 */ "TRUE",
+                                                                 /* 03 */ "FALSE",
+                                                                 /* 04 */ "INVALID_ARGUMENT",
+                                                                 /* 05 */ "INVALID_OPERATION",
+                                                                 /* 06 */ "NOT_FOUND",
+                                                                 /* 07 */ "OUT_OF_RANGE",
+                                                                 /* 08 */ "INSUFFICIENT_BUFFER_SIZE",
+                                                                 /* 09 */ "NOT_ENOUGH_MEMORY",
+                                                                 /* 0A */ "NOT_ENOUGH_MEMORY",
+                                                                 /* 0B */ "BAD_SYSTEMCALL"};
 
-    constexpr const char *strings_zydis[] = {/* 00 */ "NO_MORE_DATA",
-                                             /* 01 */ "DECODING_ERROR",
-                                             /* 02 */ "INSTRUCTION_TOO_LONG",
-                                             /* 03 */ "BAD_REGISTER",
-                                             /* 04 */ "ILLEGAL_LOCK",
-                                             /* 05 */ "ILLEGAL_LEGACY_PFX",
-                                             /* 06 */ "ILLEGAL_REX",
-                                             /* 07 */ "INVALID_MAP",
-                                             /* 08 */ "MALFORMED_EVEX",
-                                             /* 09 */ "MALFORMED_MVEX",
-                                             /* 0A */ "INVALID_MASK",
-                                             /* 0B */ "SKIP_TOKEN",
-                                             /* 0C */ "IMPOSSIBLE_INSTRUCTION"};
+    constexpr std::array<std::string_view, 13> strings_zydis = {/* 00 */ "NO_MORE_DATA",
+                                                                /* 01 */ "DECODING_ERROR",
+                                                                /* 02 */ "INSTRUCTION_TOO_LONG",
+                                                                /* 03 */ "BAD_REGISTER",
+                                                                /* 04 */ "ILLEGAL_LOCK",
+                                                                /* 05 */ "ILLEGAL_LEGACY_PFX",
+                                                                /* 06 */ "ILLEGAL_REX",
+                                                                /* 07 */ "INVALID_MAP",
+                                                                /* 08 */ "MALFORMED_EVEX",
+                                                                /* 09 */ "MALFORMED_MVEX",
+                                                                /* 0A */ "INVALID_MASK",
+                                                                /* 0B */ "SKIP_TOKEN",
+                                                                /* 0C */ "IMPOSSIBLE_INSTRUCTION"};
 
     // if (ZYAN_STATUS_MODULE(status) >= ZYAN_MODULE_USER)
     // {
@@ -88,19 +89,19 @@ struct DisasmError
     if (ZYAN_STATUS_MODULE(status) == ZYAN_MODULE_ZYCORE)
     {
         status = ZYAN_STATUS_CODE(status);
-        return status < std::size(strings_zycore) ? strings_zycore[status] : "";
+        return status < strings_zycore.size() ? strings_zycore[status] : "";
     }
 
     if (ZYAN_STATUS_MODULE(status) == ZYAN_MODULE_ZYDIS)
     {
         status = ZYAN_STATUS_CODE(status);
-        return status < std::size(strings_zydis) ? strings_zydis[status] : "";
+        return status < strings_zydis.size() ? strings_zydis[status] : "";
     }
 
     return "";
 }
 
-[[nodiscard]] tl::expected<DisasmResult, DisasmError> disasm(u8 *ip, usize len = ZYDIS_MAX_INSTRUCTION_LENGTH) noexcept
+[[nodiscard]] tl::expected<Disasm, Disasm::Error> disasm(u8 *ip, usize len = ZYDIS_MAX_INSTRUCTION_LENGTH) noexcept
 {
     static ZydisDecoder decoder;
     if (static bool once{}; !once)
@@ -112,26 +113,25 @@ struct DisasmError
 #endif
         if (!ZYAN_SUCCESS(status))
         {
-            return tl::unexpected{DisasmError{ip, status}};
+            return tl::unexpected{Disasm::Error{ip, status}};
         }
 
         once = true;
     }
 
-    DisasmResult result{};
-    auto         status = ZydisDecoderDecodeFull(&decoder, ip, len, &result.ix, result.operands);
+    Disasm result{ip};
+
+    auto status = ZydisDecoderDecodeFull(&decoder, ip, len, &result.ix, result.operands);
     if (!ZYAN_SUCCESS(status))
     {
-        return tl::unexpected{DisasmError{ip, status}};
+        return tl::unexpected{Disasm::Error{ip, status}};
     }
-
-    result.ip = ip;
 
     return result;
 }
 
 template <class Pred>
-tl::expected<DisasmResult, DisasmError> disasm_for_each(u8 *ip, usize len, Pred &&pred) noexcept
+tl::expected<Disasm, Disasm::Error> disasm_for_each(u8 *ip, usize len, Pred &&pred) noexcept
 {
     u8 *end = ip + len;
 
@@ -153,7 +153,7 @@ tl::expected<DisasmResult, DisasmError> disasm_for_each(u8 *ip, usize len, Pred 
     }
 
     // This means we've scanned everything successfully but the predicate didn't return.
-    return tl::unexpected{DisasmError{ip, ZYDIS_STATUS_NO_MORE_DATA}};
+    return tl::unexpected{Disasm::Error{ip, ZYDIS_STATUS_NO_MORE_DATA}};
 }
 
 template <class T = u8 *>
@@ -267,7 +267,7 @@ public:
     {
         constexpr std::string_view tier0_lib_name = TR_OS_WINDOWS == 1 ? "tier0.dll" : "libtier0_srv.so";
 
-        auto tier0_lib = os_get_module(tier0_lib_name);
+        u8 *tier0_lib = os_get_module(tier0_lib_name);
         if (tier0_lib == nullptr)
         {
             return false;
@@ -314,11 +314,13 @@ public:
         g_desired_tickrate = g_cmdline->ParmValue("-tickrate", 0);
         if (g_desired_tickrate <= 10)
         {
-            warn("Failed to set tickrate: \"-tickrate\" command line parameter is too small ({}, <= 10).\n", g_desired_tickrate);
+            warn(
+                "Failed to set tickrate: \"-tickrate\" command line parameter is too low (Desired tickrate is {}, minimum is 11).\n",
+                g_desired_tickrate);
             return false;
         }
 
-        info("Desired tickrate = {}.\n", g_desired_tickrate);
+        info("Desired tickrate is {}.\n", g_desired_tickrate);
 
         // TODO: This might be easier on Linux with `os_get_procedure`.
 

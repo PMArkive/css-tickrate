@@ -1,6 +1,6 @@
 # CS:S Tickrate (Server addon)
 
-A **Counter-Strike: Source** server addon that enables the `-tickrate` command line parameter.
+A _standalone_ **Counter-Strike: Source** server addon that enables the `-tickrate` command line parameter.
 
 ## Usage & Installation
 
