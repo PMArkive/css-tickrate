@@ -12,7 +12,7 @@ You can now pass `-tickrate <Desired Tickrate>` on the command line.
 ## Building
 
 If the releases don't fit your needs then you can build the library yourself.\
-Building requires **CMake** and a **C++23** ready compiler.
+Building requires **CMake** and a **C++17** ready compiler.
 
 Here are some examples (assuming a 64-bit OS):
 
