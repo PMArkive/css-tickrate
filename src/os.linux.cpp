@@ -22,7 +22,7 @@
     return (u8 *)handle;
 }
 
-[[nodiscard]] u8 *os_get_procedure(ModuleHandle module, std::string_view proc_name) noexcept
+[[nodiscard]] u8 *os_get_procedure(u8 *module, std::string_view proc_name) noexcept
 {
     if (module == nullptr || proc_name.empty())
     {
