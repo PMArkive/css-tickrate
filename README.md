@@ -4,10 +4,14 @@ A _standalone_ **Counter-Strike: Source** server addon that enables the `-tickra
 
 ## Usage & Installation
 
-Download a release zip from [here](https://github.com/angelfor3v3r/css-tickrate/releases) and extract the `addons`
-folder into your server's `cstrike` folder (**The Linux releases provided require a modern version of `GLIBC/GLIBCXX`**).
+Download a release zip from [here](https://github.com/angelfor3v3r/css-tickrate/releases) and extract the `addons` folder into your server's `cstrike` folder.
 
-You can now pass `-tickrate <Desired Tickrate>` on the command line.
+You can now pass `-tickrate <Desired Tickrate>` on the command line:
+```
+srcds.exe -console -game cstrike +maxplayers 10 +sv_maxupdaterate 100 +sv_maxcmdrate 100 +map de_nuke -tickrate 100
+```
+
+Note that you must set ConVars such as `sv_maxupdaterate`, `sv_maxcmdrate`, etc to accommodate the new tickrate setting.
 
 ## Building
 
