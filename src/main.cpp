@@ -327,7 +327,7 @@ public:
         u8 *createinterface = (u8 *)gameserver_factory;
 
         // Check for a jump thunk. It should always be first.
-        // Some versions of the game have this for some reason. If it's not found then we don't worry about it.
+        // Some versions of the game have this for some reason. If there isn't one then we don't worry about it.
         for (;;)
         {
             auto thunk_disasm_result = disasm(createinterface);
@@ -343,6 +343,7 @@ public:
                 break;
             }
 
+            // createinterface += len + imm32
             createinterface = thunk_disasm.ip + thunk_disasm.ix.length + (i32)thunk_disasm.operands[0].imm.value.s;
         }
 

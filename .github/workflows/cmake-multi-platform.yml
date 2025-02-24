@@ -107,7 +107,7 @@ jobs:
             c_flags: "-m32"
             cxx_flags: "-m32"
     container:
-      image: ubuntu:20.04
+      image: debian:buster
       env:
         DEBIAN_FRONTEND: noninteractive
     steps:
@@ -116,8 +116,11 @@ jobs:
       - name: Init
         shell: bash
         run: |
-          apt-get update
-          apt-get install -y git zip cmake ninja-build build-essential
+          apt-get update && apt-get install -y wget git zip ninja-build build-essential
+          wget https://cmake.org/files/v3.15/cmake-3.15.7-Linux-x86_64.sh
+          mkdir /opt/cmake
+          sh cmake-3.15.7-Linux-x86_64.sh --skip-license --prefix=/opt/cmake
+          ln -s /opt/cmake/bin/cmake /usr/local/bin/cmake
           if [ "${{matrix.arch}}" = "x86" ]; then
             apt-get install -y g++-multilib
           fi
