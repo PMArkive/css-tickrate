@@ -39,19 +39,6 @@ enum EQueryCvarValueStatus : i32
     eQueryCvarValueStatus_CvarProtected,
 };
 
-struct Disasm
-{
-    struct Error
-    {
-        u8        *ip{};
-        ZyanStatus status{ZYAN_STATUS_FAILED};
-    };
-
-    u8                     *ip{};
-    ZydisDecodedInstruction ix{};
-    ZydisDecodedOperand     operands[ZYDIS_MAX_OPERAND_COUNT]{};
-};
-
 [[nodiscard]] std::string_view zyanstatus_to_str(ZyanStatus status) noexcept
 {
     constexpr std::array<std::string_view, 12> strings_zycore = {/* 00 */ "SUCCESS",
@@ -100,6 +87,24 @@ struct Disasm
 
     return "";
 }
+
+struct Disasm
+{
+    struct Error
+    {
+        u8        *ip{};
+        ZyanStatus status{ZYAN_STATUS_FAILED};
+
+        [[nodiscard]] auto status_str() const noexcept
+        {
+            return zyanstatus_to_str(status);
+        }
+    };
+
+    u8                     *ip{};
+    ZydisDecodedInstruction ix{};
+    ZydisDecodedOperand     operands[ZYDIS_MAX_OPERAND_COUNT]{};
+};
 
 [[nodiscard]] tl::expected<Disasm, Disasm::Error> disasm(u8 *ip, usize len = ZYDIS_MAX_INSTRUCTION_LENGTH) noexcept
 {
@@ -333,7 +338,7 @@ public:
             auto thunk_disasm_result = disasm(createinterface);
             if (!thunk_disasm_result.has_value())
             {
-                warn("Failed to decode first instruction in \"CreateInterface\": %s\n", zyanstatus_to_str(thunk_disasm_result.error().status).data());
+                warn("Failed to decode first instruction in \"CreateInterface\": {}\n", thunk_disasm_result.error().status_str());
                 return false;
             }
 
@@ -365,7 +370,7 @@ public:
             });
         if (!regs_disasm_result.has_value())
         {
-            warn("Failed to find instruction containing \"s_pInterfaceRegs\": %s\n", zyanstatus_to_str(regs_disasm_result.error().status).data());
+            warn("Failed to find instruction containing \"s_pInterfaceRegs\": {}\n", regs_disasm_result.error().status_str());
             return false;
         }
 
