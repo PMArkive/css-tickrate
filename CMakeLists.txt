@@ -1,4 +1,3 @@
-# TODO: We may be able to drop this to 3.12 if we can test Clang-CL.
 cmake_minimum_required(VERSION 3.15)
 
 project(css_tickrate

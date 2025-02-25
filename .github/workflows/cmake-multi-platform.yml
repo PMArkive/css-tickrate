@@ -44,7 +44,7 @@ jobs:
         id: strings
         shell: bash
         run: |
-          echo "build-output-dir=${{github.workspace}}/build" >> "$GITHUB_OUTPUT"
+          echo "build-output-dir=${{github.workspace}}/cmake-build-${{matrix.arch}}" >> "$GITHUB_OUTPUT"
 
       - name: Configure CMake
         run: >
@@ -54,7 +54,6 @@ jobs:
           -DCMAKE_C_COMPILER=${{matrix.c_compiler}}
           -DCMAKE_BUILD_TYPE=${{matrix.build_type}}
           -DCMAKE_INSTALL_PREFIX=${{env.TR_INSTALL_DIR}}
-          -S ${{github.workspace}}
 
       - name: Build
         run: cmake --build ${{steps.strings.outputs.build-output-dir}} --config ${{matrix.build_type}}
@@ -66,9 +65,10 @@ jobs:
         uses: actions/upload-artifact@v4.6.1
         with:
           name: ${{env.TR_ZIP_FILENAME}}
-          path: ${{env.TR_INSTALL_DIR}}/*
+          path: ${{env.TR_INSTALL_DIR}}
 
       - name: Archive Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: thedoctor0/zip-release@0.7.5
         with:
           type: zip
@@ -77,8 +77,8 @@ jobs:
           path: addons
 
       - name: Release
-        uses: softprops/action-gh-release@v2.2.1
         if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2.2.1
         with:
           token: ${{secrets.RELEASE_TOKEN}}
           prerelease: ${{contains(github.ref, '-pre')}}
@@ -115,8 +115,10 @@ jobs:
 
       - name: Init
         shell: bash
+        # CMake 3.15 added `--install` support, so that's why it's manually installed here.
         run: |
-          apt-get update && apt-get install -y wget git zip ninja-build build-essential
+          apt-get update
+          apt-get install -y wget git zip build-essential ninja-build
           if [ "${{matrix.arch}}" = "x86" ]; then
             apt-get install -y gcc-multilib g++-multilib
           fi
@@ -131,11 +133,11 @@ jobs:
         id: strings
         shell: bash
         run: |
-          echo "build-output-dir=./build" >> "$GITHUB_OUTPUT"
+          echo "build-output-dir=./cmake-build-${{matrix.arch}}" >> "$GITHUB_OUTPUT"
 
       - name: Configure CMake
         run: >
-          cmake -B ${{steps.strings.outputs.build-output-dir}}
+          cmake -G Ninja -B ${{steps.strings.outputs.build-output-dir}}
           -DCMAKE_CXX_COMPILER=${{matrix.cpp_compiler}}
           -DCMAKE_C_COMPILER=${{matrix.c_compiler}}
           -DCMAKE_C_FLAGS=${{matrix.c_flags}}
@@ -153,9 +155,10 @@ jobs:
         uses: actions/upload-artifact@v4.6.1
         with:
           name: ${{env.TR_ZIP_FILENAME}}
-          path: ${{env.TR_INSTALL_DIR}}/*
+          path: ${{env.TR_INSTALL_DIR}}
 
       - name: Archive Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: thedoctor0/zip-release@0.7.5
         with:
           type: zip
@@ -164,8 +167,8 @@ jobs:
           path: addons
 
       - name: Release
-        uses: softprops/action-gh-release@v2.2.1
         if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2.2.1
         with:
           token: ${{secrets.RELEASE_TOKEN}}
           prerelease: ${{contains(github.ref, '-pre')}}
