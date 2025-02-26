@@ -16,7 +16,7 @@ Note that you must set ConVars such as `sv_maxupdaterate`, `sv_maxcmdrate`, etc 
 ## Building
 
 If the releases don't fit your needs then you can build the library yourself.\
-Building requires **CMake 3.15** and a **C++17** ready compiler.
+Building requires **CMake 3.15** (or later) and a **C++17** ready compiler.
 
 Here are some examples (assuming a 64-bit OS):
 
