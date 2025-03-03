@@ -2,6 +2,8 @@
 
 A _standalone_ **Counter-Strike: Source** server addon that enables the `-tickrate` command line parameter.
 
+**Note**: This plugin may also work on other source games, but it's untested. If there's a Source game you'd like it to work on and you've confirmed it doesn't work, then please feel free to open an issue or pull request.
+
 ## Usage & Installation
 
 Download a release zip from [here](https://github.com/angelfor3v3r/css-tickrate/releases) and extract the `addons` folder into your server's `cstrike` folder.
