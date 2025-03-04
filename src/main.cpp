@@ -238,12 +238,11 @@ using Warning_fn = void(TR_CCALL *)(cstr, ...);
 using Msg_fn     = void(TR_CCALL *)(cstr, ...);
 
 // Global variables.
-Warning_fn    g_Warning{};
-Msg_fn        g_Msg{};
-CCommandLine *g_cmdline{};
-i32           g_desired_tickrate{};
-SafetyHookVmt g_servergame_hook{};
-SafetyHookVm  g_GetTickInterval_hook{};
+Warning_fn       g_Warning{};
+Msg_fn           g_Msg{};
+CCommandLine    *g_cmdline{};
+i32              g_desired_tickrate{};
+SafetyHookInline g_GetTickInterval_hook{};
 
 template <class... Args>
 void warn(std::string_view fmt_str, Args &&...args) noexcept
@@ -257,19 +256,12 @@ void info(std::string_view fmt_str, Args &&...args) noexcept
     g_Msg("[Tickrate] [info] %s", fmt::vformat(fmt_str, fmt::make_format_args(args...)).c_str());
 }
 
-class Hooked_CServerGameDLL : public CServerGameDLL
+f32 TR_THISCALL hooked_CServerGameDLL_GetTickInterval([[maybe_unused]] CServerGameDLL *instance) noexcept
 {
-public:
-    f32 hooked_GetTickInterval() const noexcept
-    {
-        static usize num_calls{};
-        info("hooked_GetTickInterval {}\n", num_calls++);
+    f32 interval = 1.0f / (f32)g_desired_tickrate;
 
-        f32 interval = 1.0f / (f32)g_desired_tickrate;
-
-        return interval;
-    }
-};
+    return interval;
+}
 
 class TickratePlugin final : public IServerPluginCallbacks,
                              public IGameEventListener
@@ -424,8 +416,12 @@ public:
             return false;
         }
 
-        g_servergame_hook      = safetyhook::create_vmt(servergame);
-        g_GetTickInterval_hook = safetyhook::create_vm(g_servergame_hook, 10, &Hooked_CServerGameDLL::hooked_GetTickInterval);
+        g_GetTickInterval_hook = safetyhook::create_inline(get_virtual(servergame, 10), hooked_CServerGameDLL_GetTickInterval);
+        if (!g_GetTickInterval_hook)
+        {
+            warn("Failed to hook `CServerGameDLL::GetTickInterval` function.\n");
+            return false;
+        }
 
         info("Loaded.\n");
 
@@ -434,7 +430,7 @@ public:
 
     void Unload() noexcept override
     {
-        g_servergame_hook = {};
+        g_GetTickInterval_hook = {};
 
         info("Unloaded.\n");
     }
