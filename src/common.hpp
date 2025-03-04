@@ -13,7 +13,7 @@
 #define TR_COMPILER_CLANG 0
 #define TR_COMPILER_GCC   1
 #else
-#error "CS:S Tickrate: Unsupported compiler"
+#error "Tickrate: Unsupported compiler"
 #endif
 
 #if TR_COMPILER_MSVC
@@ -24,7 +24,7 @@
 #define TR_ARCH_X86_64 0
 #define TR_ARCH_X86_32 1
 #else
-#error "CS:S Tickrate: Unsupported architecture"
+#error "Tickrate: Unsupported architecture"
 #endif
 #elif TR_COMPILER_CLANG || TR_COMPILER_GCC
 #if defined(__x86_64__)
@@ -34,7 +34,7 @@
 #define TR_ARCH_X86_64 0
 #define TR_ARCH_X86_32 1
 #else
-#error "CS:S Tickrate: Unsupported architecture"
+#error "Tickrate: Unsupported architecture"
 #endif
 #endif
 
@@ -45,7 +45,7 @@
 #define TR_OS_WINDOWS 0
 #define TR_OS_LINUX   1
 #else
-#error "CS:S Tickrate: Unsupported OS."
+#error "Tickrate: Unsupported OS."
 #endif
 
 #if TR_OS_WINDOWS

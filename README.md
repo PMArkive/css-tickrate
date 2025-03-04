@@ -1,19 +1,24 @@
-# CS:S Tickrate (Server addon)
+# Source Tickrate (Server addon)
 
-A _standalone_ **Counter-Strike: Source** server addon that enables the `-tickrate` command line parameter.
+A _standalone_ **Source Engine** server addon that enables the `-tickrate` command line parameter.
 
-**Note**: This plugin may also work on other source games, but it's untested. If there's a Source game you'd like it to work on and you've confirmed it doesn't work, then please feel free to open an issue or pull request.
+Currently tested on:
+* Counter-Strike: Source (32-bit & 64-bit)
+* Team Fortress 2 (32-bit & 64-bit)
+
+**Note**: This plugin may also work on other source games, but it's untested. If there's a Source game you'd like it to work on, and you've confirmed it doesn't work, then please feel free to open an issue or pull request.
 
 ## Usage & Installation
 
 Download a release zip from [here](https://github.com/angelfor3v3r/css-tickrate/releases) and extract the `addons` folder into your server's `cstrike` folder.
 
-You can now pass `-tickrate <Desired Tickrate>` on the command line:
+You can now pass `-tickrate <Desired Tickrate>` on the command line.
+Example for **Counter-Strike: Source**:
 ```
 srcds.exe -console -game cstrike +maxplayers 10 +map de_nuke -tickrate 100
 ```
 
-Note that you must set ConVars such as `sv_maxupdaterate`, `sv_maxcmdrate`, etc to accommodate the new tickrate setting.
+Note that you must set ConVars such as `sv_maxupdaterate`, `sv_maxcmdrate`, etc. to accommodate the new tickrate setting.
 
 ## Building
 

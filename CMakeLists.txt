@@ -1,6 +1,7 @@
+# NOTE: I use Clang-CL on Windows, so I must use this version of CMake.
 cmake_minimum_required(VERSION 3.15)
 
-project(css_tickrate
+project(tickrate
     VERSION 1.0.0
     LANGUAGES CXX C)
 
@@ -21,7 +22,7 @@ include(cmake/CPM.cmake)
 
 CPMAddPackage(NAME fmt
     GITHUB_REPOSITORY fmtlib/fmt
-    GIT_TAG 11.1.3
+    GIT_TAG 11.1.4
     OPTIONS "FMT_INSTALL OFF")
 CPMAddPackage(NAME zydis
     GITHUB_REPOSITORY zyantific/zydis
@@ -33,33 +34,34 @@ CPMAddPackage(NAME zydis
     "ZYDIS_BUILD_EXAMPLES OFF")
 CPMAddPackage("gh:TartanLlama/expected@1.1.0")
 
-set(css_tickrate_headers
+set(tickrate_headers
     src/common.hpp
     src/type.hpp
     src/os.hpp
     src/safetyhook/safetyhook.hpp)
-set(css_tickrate_sources
+set(tickrate_sources
     src/safetyhook/safetyhook.cpp
     src/main.cpp)
 
 if (WIN32)
-    list(APPEND css_tickrate_sources src/os.windows.cpp)
+    list(APPEND tickrate_sources src/os.windows.cpp)
 elseif (UNIX)
-    list(APPEND css_tickrate_sources src/os.linux.cpp)
+    list(APPEND tickrate_sources src/os.linux.cpp)
 else ()
-    message(FATAL_ERROR "css_tickrate: Unsupported OS.")
+    message(FATAL_ERROR "tickrate: Unsupported OS.")
 endif ()
 
-source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${css_tickrate_headers} ${css_tickrate_sources})
-add_library(css_tickrate SHARED ${css_tickrate_headers} ${css_tickrate_sources})
-target_compile_features(css_tickrate PRIVATE cxx_std_17)
-target_link_libraries(css_tickrate PRIVATE Zydis tl::expected fmt::fmt)
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${tickrate_headers} ${tickrate_sources})
+add_library(tickrate SHARED ${tickrate_headers} ${tickrate_sources})
+target_compile_features(tickrate PRIVATE cxx_std_17)
+target_link_libraries(tickrate PRIVATE Zydis tl::expected fmt::fmt)
 
 if (WIN32)
     if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
         # Clang-CL
-        target_compile_options(css_tickrate
+        target_compile_options(tickrate
             PRIVATE
+            # /clang:-g
             /clang:-Wall
             /clang:-Wextra
             /clang:-Wshadow
@@ -71,7 +73,7 @@ if (WIN32)
     elseif (CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         # MSVC
     else ()
-        message(FATAL_ERROR "css_tickrate: Unsupported compiler.")
+        message(FATAL_ERROR "tickrate: Unsupported compiler.")
     endif ()
 else ()
     if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -79,7 +81,7 @@ else ()
     elseif (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
         # Clang
     else ()
-        message(FATAL_ERROR "css_tickrate: Unsupported compiler.")
+        message(FATAL_ERROR "tickrate: Unsupported compiler.")
     endif ()
 endif ()
 
@@ -90,12 +92,12 @@ else ()
 endif ()
 
 # File paths.
-set(tr_bin_filename "css_tickrate${tr_arch_suffix}")
+set(tr_bin_filename "tickrate${tr_arch_suffix}")
 set(tr_vdf_filepath "${CMAKE_BINARY_DIR}/${tr_bin_filename}.vdf")
-set_target_properties(css_tickrate PROPERTIES OUTPUT_NAME "${tr_bin_filename}")
+set_target_properties(tickrate PROPERTIES OUTPUT_NAME "${tr_bin_filename}")
 
 # Install files.
-install(TARGETS css_tickrate
+install(TARGETS tickrate
     RUNTIME DESTINATION "addons"
     LIBRARY DESTINATION "addons")
 file(WRITE "${tr_vdf_filepath}"

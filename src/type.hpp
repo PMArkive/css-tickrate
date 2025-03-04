@@ -18,3 +18,5 @@ using usize = std::size_t;
 
 using f64 = double;
 using f32 = float;
+
+using cstr = const char *;

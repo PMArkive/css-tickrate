@@ -6,10 +6,12 @@
 #include <fmt/format.h>
 #include <Zycore/Status.h>
 #include <Zydis/Zydis.h>
+#include <cstring>
 #include <string_view>
 #include <array>
+#include <charconv>
 
-using CreateInterfaceFn      = void *(TR_CCALL *)(const char *name, i32 *return_code);
+using CreateInterfaceFn      = void *(TR_CCALL *)(cstr name, i32 *return_code);
 using InstantiateInterfaceFn = void *(TR_CCALL *)();
 
 struct edict_t;
@@ -39,8 +41,20 @@ enum EQueryCvarValueStatus : i32
     eQueryCvarValueStatus_CvarProtected,
 };
 
-[[nodiscard]] std::string_view zyanstatus_to_str(ZyanStatus status) noexcept
+[[nodiscard]] bool sv_contains(std::string_view str, std::string_view delim) noexcept
 {
+    return str.find(delim) != std::string_view::npos;
+}
+
+template <class T = u8 *>
+T get_virtual(const void *object, u16 index) noexcept
+{
+    return (*(T **)object)[index];
+}
+
+[[nodiscard]] std::string_view zyan_status_str(ZyanStatus status) noexcept
+{
+    // Taken from: https://github.com/zyantific/zydis/blob/v4.1.1/tools/ZydisToolsShared.c#L79-L151
     constexpr std::array<std::string_view, 12> strings_zycore = {/* 00 */ "SUCCESS",
                                                                  /* 01 */ "FAILED",
                                                                  /* 02 */ "TRUE",
@@ -97,7 +111,7 @@ struct Disasm
 
         [[nodiscard]] auto status_str() const noexcept
         {
-            return zyanstatus_to_str(status);
+            return zyan_status_str(status);
         }
     };
 
@@ -109,6 +123,7 @@ struct Disasm
 [[nodiscard]] tl::expected<Disasm, Disasm::Error> disasm(u8 *ip, usize len = ZYDIS_MAX_INSTRUCTION_LENGTH) noexcept
 {
     static ZydisDecoder decoder;
+
     if (static bool once{}; !once)
     {
 #if TR_ARCH_X86_64
@@ -116,7 +131,7 @@ struct Disasm
 #else
         auto status = ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LEGACY_32, ZYDIS_STACK_WIDTH_32);
 #endif
-        if (!ZYAN_SUCCESS(status))
+        if (ZYAN_SUCCESS(status) == ZYAN_FALSE)
         {
             return tl::unexpected{Disasm::Error{ip, status}};
         }
@@ -124,13 +139,15 @@ struct Disasm
         once = true;
     }
 
-    Disasm result{ip};
+    Disasm result{};
 
     auto status = ZydisDecoderDecodeFull(&decoder, ip, len, &result.ix, result.operands);
-    if (!ZYAN_SUCCESS(status))
+    if (ZYAN_SUCCESS(status) == ZYAN_FALSE)
     {
         return tl::unexpected{Disasm::Error{ip, status}};
     }
+
+    result.ip = ip;
 
     return result;
 }
@@ -158,34 +175,23 @@ tl::expected<Disasm, Disasm::Error> disasm_for_each(u8 *ip, usize len, Pred &&pr
     }
 
     // This means we've scanned everything successfully but the predicate didn't return.
-    return tl::unexpected{Disasm::Error{ip, ZYDIS_STATUS_NO_MORE_DATA}};
-}
-
-template <class T = u8 *>
-T get_virtual(const void *object, u16 index) noexcept
-{
-    return (*(T **)object)[index];
+    return tl::unexpected{Disasm::Error{ip}};
 }
 
 class InterfaceReg
 {
 public:
     InstantiateInterfaceFn m_CreateFn;
-    const char            *m_pName;
+    cstr                   m_pName;
     InterfaceReg          *m_pNext;
 };
 
 class CCommandLine
 {
 public:
-    [[nodiscard]] i32 ParmValue(const char *parm, i32 default_value) const noexcept
+    [[nodiscard]] cstr CheckParm(cstr name, cstr *out_value = nullptr) const noexcept
     {
-        return get_virtual<i32(TR_THISCALL *)(decltype(this), const char *, i32)>(this, 7)(this, parm, default_value);
-    }
-
-    [[nodiscard]] i32 FindParm(const char *parm) const noexcept
-    {
-        return get_virtual<i32(TR_THISCALL *)(decltype(this), const char *)>(this, 10)(this, parm);
+        return get_virtual<cstr(TR_THISCALL *)(decltype(this), cstr, cstr *)>(this, 3)(this, name, out_value);
     }
 };
 
@@ -194,31 +200,31 @@ class CServerGameDLL
 public:
 };
 
+// ISERVERPLUGINCALLBACKS003
 class IServerPluginCallbacks
 {
 public:
-    virtual bool        Load(CreateInterfaceFn interface_factory, CreateInterfaceFn gameserver_factory) = 0;
-    virtual void        Unload()                                                                        = 0;
-    virtual void        Pause()                                                                         = 0;
-    virtual void        UnPause()                                                                       = 0;
-    virtual const char *GetPluginDescription()                                                          = 0;
-    virtual void        LevelInit(const char *map_name)                                                 = 0;
-    virtual void        ServerActivate(edict_t *edict_list, i32 edict_count, i32 client_max)            = 0;
-    virtual void        GameFrame(bool simulating)                                                      = 0;
-    virtual void        LevelShutdown()                                                                 = 0;
-    virtual void        ClientActive(edict_t *edict)                                                    = 0;
-    virtual void        ClientDisconnect(edict_t *edict)                                                = 0;
-    virtual void        ClientPutInServer(edict_t *edict, const char *player_name)                      = 0;
-    virtual void        SetCommandClient(i32 index)                                                     = 0;
-    virtual void        ClientSettingsChanged(edict_t *edict)                                           = 0;
-    virtual PLUGIN_RESULT
-    ClientConnect(bool *allow_connect, edict_t *edict, const char *name, const char *address, char *reject, i32 max_reject_len) = 0;
-    virtual PLUGIN_RESULT ClientCommand(edict_t *edict, const CCommand &args)                                                   = 0;
-    virtual PLUGIN_RESULT NetworkIDValidated(const char *user_name, const char *network_id)                                     = 0;
-    virtual void          OnQueryCvarValueFinished(
-                 QueryCvarCookie_t cookie, edict_t *edict, EQueryCvarValueStatus status, const char *cvar_name, const char *cvar_value) = 0;
-    virtual void OnEdictAllocated(edict_t *edict)                                                                                       = 0;
-    virtual void OnEdictFreed(edict_t *edict)                                                                                           = 0;
+    virtual bool          Load(CreateInterfaceFn interface_factory, CreateInterfaceFn gameserver_factory)                               = 0;
+    virtual void          Unload()                                                                                                      = 0;
+    virtual void          Pause()                                                                                                       = 0;
+    virtual void          UnPause()                                                                                                     = 0;
+    virtual cstr          GetPluginDescription()                                                                                        = 0;
+    virtual void          LevelInit(cstr map_name)                                                                                      = 0;
+    virtual void          ServerActivate(edict_t *edict_list, i32 edict_count, i32 client_max)                                          = 0;
+    virtual void          GameFrame(bool simulating)                                                                                    = 0;
+    virtual void          LevelShutdown()                                                                                               = 0;
+    virtual void          ClientActive(edict_t *edict)                                                                                  = 0;
+    virtual void          ClientDisconnect(edict_t *edict)                                                                              = 0;
+    virtual void          ClientPutInServer(edict_t *edict, cstr player_name)                                                           = 0;
+    virtual void          SetCommandClient(i32 index)                                                                                   = 0;
+    virtual void          ClientSettingsChanged(edict_t *edict)                                                                         = 0;
+    virtual PLUGIN_RESULT ClientConnect(bool *allow_connect, edict_t *edict, cstr name, cstr address, char *reject, i32 max_reject_len) = 0;
+    virtual PLUGIN_RESULT ClientCommand(edict_t *edict, const CCommand &args)                                                           = 0;
+    virtual PLUGIN_RESULT NetworkIDValidated(cstr username, cstr network_id)                                                            = 0;
+    virtual void
+    OnQueryCvarValueFinished(QueryCvarCookie_t cookie, edict_t *edict, EQueryCvarValueStatus status, cstr cvar_name, cstr cvar_value) = 0;
+    virtual void OnEdictAllocated(edict_t *edict)                                                                                     = 0;
+    virtual void OnEdictFreed(edict_t *edict)                                                                                         = 0;
 };
 
 class IGameEventListener
@@ -228,9 +234,10 @@ public:
     virtual void FireGameEvent(KeyValues *event) = 0;
 };
 
-using Warning_fn = void(TR_CCALL *)(const char *, ...);
-using Msg_fn     = void(TR_CCALL *)(const char *, ...);
+using Warning_fn = void(TR_CCALL *)(cstr, ...);
+using Msg_fn     = void(TR_CCALL *)(cstr, ...);
 
+// Global variables.
 Warning_fn    g_Warning{};
 Msg_fn        g_Msg{};
 CCommandLine *g_cmdline{};
@@ -241,13 +248,13 @@ SafetyHookVm  g_GetTickInterval_hook{};
 template <class... Args>
 void warn(std::string_view fmt_str, Args &&...args) noexcept
 {
-    g_Warning("[CS:S Tickrate] [warning] %s", fmt::vformat(fmt_str, fmt::make_format_args(args...)).c_str());
+    g_Warning("[Tickrate] [warn] %s", fmt::vformat(fmt_str, fmt::make_format_args(args...)).c_str());
 }
 
 template <class... Args>
 void info(std::string_view fmt_str, Args &&...args) noexcept
 {
-    g_Msg("[CS:S Tickrate] [info] %s", fmt::vformat(fmt_str, fmt::make_format_args(args...)).c_str());
+    g_Msg("[Tickrate] [info] %s", fmt::vformat(fmt_str, fmt::make_format_args(args...)).c_str());
 }
 
 class Hooked_CServerGameDLL : public CServerGameDLL
@@ -287,7 +294,7 @@ public:
         g_Msg = os_get_procedure<Msg_fn>(tier0_lib, "Msg");
         if (g_Msg == nullptr)
         {
-            warn("Failed to find \"Msg\" procedure.\n");
+            warn("Failed to find `Msg` procedure.\n");
             return false;
         }
 
@@ -296,7 +303,7 @@ public:
         auto *CommandLine_Tier0 = os_get_procedure<CCommandLine *(TR_CCALL *)()>(tier0_lib, "CommandLine_Tier0");
         if (CommandLine_Tier0 == nullptr)
         {
-            warn("Failed to find \"CommandLine_Tier0\" procedure.\n");
+            warn("Failed to find `CommandLine_Tier0` procedure.\n");
             return false;
         }
 
@@ -307,20 +314,26 @@ public:
             return false;
         }
 
-        // info("CCommandLine = 0x{:X}\n", (usize)g_cmdline);
-
-        // Just let the engine handle it if there's no command line parameter.
-        if (g_cmdline->FindParm("-tickrate") == 0)
+        // Parse command line... or just let the engine handle it if there's no `-tickrate` parameter.
+        cstr  tickrate_str{};
+        auto *tickrate = g_cmdline->CheckParm("-tickrate", &tickrate_str);
+        if (tickrate == nullptr || tickrate_str == nullptr)
         {
-            warn("Failed to set tickrate: No \"-tickrate\" command line parameter was passed.\n");
+            warn("Failed to set tickrate: No `-tickrate` command line parameter was passed.\n");
             return false;
         }
 
-        g_desired_tickrate = g_cmdline->ParmValue("-tickrate", 0);
+        auto [ptr, ec] = std::from_chars(tickrate_str, tickrate_str + std::strlen(tickrate_str), g_desired_tickrate);
+        if (ec != std::errc{})
+        {
+            warn("Failed to convert `-tickrate` command line parameter.\n");
+            return false;
+        }
+
         if (g_desired_tickrate <= 10)
         {
             warn(
-                "Failed to set tickrate: \"-tickrate\" command line parameter is too low (Desired tickrate is {}, minimum is 11).\n",
+                "Failed to set tickrate: `-tickrate` command line parameter is too low (Desired tickrate is {}, minimum is 11).\n",
                 g_desired_tickrate);
             return false;
         }
@@ -338,25 +351,22 @@ public:
             auto thunk_disasm_result = disasm(createinterface);
             if (!thunk_disasm_result.has_value())
             {
-                warn("Failed to decode first instruction in \"CreateInterface\": {}\n", thunk_disasm_result.error().status_str());
+                warn("Failed to decode first instruction in `CreateInterface`: {}\n", thunk_disasm_result.error().status_str());
                 return false;
             }
 
-            auto &thunk_disasm = thunk_disasm_result.value();
+            auto &&thunk_disasm = thunk_disasm_result.value();
             if (thunk_disasm.ix.mnemonic != ZYDIS_MNEMONIC_JMP)
             {
                 break;
             }
 
-            // createinterface += len + imm32
-            createinterface = thunk_disasm.ip + thunk_disasm.ix.length + (i32)thunk_disasm.operands[0].imm.value.s;
+            createinterface += thunk_disasm.ix.length + (i32)thunk_disasm.operands[0].imm.value.s;
         }
-
-        InterfaceReg *regs{};
 
         auto regs_disasm_result = disasm_for_each(
             createinterface,
-            ZYDIS_MAX_INSTRUCTION_LENGTH * 20,
+            ZYDIS_MAX_INSTRUCTION_LENGTH * 25,
             [](auto &&result) noexcept
             {
                 // x86-64 is RIP-relative. x86-32 is absolute.
@@ -370,37 +380,35 @@ public:
             });
         if (!regs_disasm_result.has_value())
         {
-            warn("Failed to find instruction containing \"s_pInterfaceRegs\": {}\n", regs_disasm_result.error().status_str());
+            warn("Failed to find instruction containing `s_pInterfaceRegs`: {}\n", regs_disasm_result.error().status_str());
             return false;
         }
 
-        auto &regs_disasm = regs_disasm_result.value();
+        auto &&regs_disasm = regs_disasm_result.value();
 
         // x86-64 is RIP-relative. x86-32 is absolute.
 #if TR_ARCH_X86_64
-        regs = *(InterfaceReg **)(regs_disasm.ip + regs_disasm.ix.length + (i32)regs_disasm.operands[1].mem.disp.value);
+        auto *regs = *(InterfaceReg **)(regs_disasm.ip + regs_disasm.ix.length + (i32)regs_disasm.operands[1].mem.disp.value);
 #else
-        regs = *(InterfaceReg **)(usize)regs_disasm.operands[1].mem.disp.value;
+        auto *regs = *(InterfaceReg **)(usize)regs_disasm.operands[1].mem.disp.value;
 #endif
 
         if (regs == nullptr)
         {
-            warn("Failed to find \"s_pInterfaceRegs\" (null).\n");
+            warn("Failed to find `s_pInterfaceRegs` (null).\n");
             return false;
         }
-
-        // info("Server \"s_pInterfaceRegs\" = 0x{:X}\n", (usize)regs);
 
         CServerGameDLL *servergame{};
 
         for (auto *it = regs; it != nullptr; it = it->m_pNext)
         {
-            if (!it->m_pName)
+            if (it->m_pName == nullptr)
             {
                 continue;
             }
 
-            if (std::string_view{it->m_pName}.find("ServerGameDLL") != std::string_view::npos)
+            if (sv_contains(it->m_pName, "ServerGameDLL"))
             {
                 servergame = (CServerGameDLL *)it->m_CreateFn();
                 break;
@@ -409,11 +417,9 @@ public:
 
         if (servergame == nullptr)
         {
-            warn("Failed to find \"ServerGameDLL\" interface.\n");
+            warn("Failed to find `ServerGameDLL` interface.\n");
             return false;
         }
-
-        // info("ServerGameDLL = 0x{:X}\n", (usize)servergame);
 
         g_servergame_hook      = safetyhook::create_vmt(servergame);
         g_GetTickInterval_hook = safetyhook::create_vm(g_servergame_hook, 10, &Hooked_CServerGameDLL::hooked_GetTickInterval);
@@ -434,12 +440,12 @@ public:
 
     void UnPause() noexcept override {}
 
-    const char *GetPluginDescription() noexcept override
+    cstr GetPluginDescription() noexcept override
     {
-        return "CS:S Tickrate (angelfor3v3r)";
+        return "Tickrate (angelfor3v3r)";
     }
 
-    void LevelInit(const char *map_name) noexcept override {}
+    void LevelInit(cstr map_name) noexcept override {}
 
     void ServerActivate(edict_t *edict_list, i32 edict_count, i32 client_max) noexcept override {}
 
@@ -451,14 +457,14 @@ public:
 
     void ClientDisconnect(edict_t *edict) noexcept override {}
 
-    void ClientPutInServer(edict_t *edict, const char *player_name) noexcept override {}
+    void ClientPutInServer(edict_t *edict, cstr player_name) noexcept override {}
 
     void SetCommandClient(i32 index) noexcept override {}
 
     void ClientSettingsChanged(edict_t *edict) noexcept override {}
 
     PLUGIN_RESULT
-    ClientConnect(bool *allow_connect, edict_t *edict, const char *name, const char *address, char *reject, i32 max_reject_len) noexcept override
+    ClientConnect(bool *allow_connect, edict_t *edict, cstr name, cstr address, char *reject, i32 max_reject_len) noexcept override
     {
         return PLUGIN_CONTINUE;
     }
@@ -468,13 +474,13 @@ public:
         return PLUGIN_CONTINUE;
     }
 
-    PLUGIN_RESULT NetworkIDValidated(const char *user_name, const char *network_id) noexcept override
+    PLUGIN_RESULT NetworkIDValidated(cstr username, cstr network_id) noexcept override
     {
         return PLUGIN_CONTINUE;
     }
 
     void OnQueryCvarValueFinished(
-        QueryCvarCookie_t cookie, edict_t *edict, EQueryCvarValueStatus status, const char *cvar_name, const char *cvar_value) noexcept override
+        QueryCvarCookie_t cookie, edict_t *edict, EQueryCvarValueStatus status, cstr cvar_name, cstr cvar_value) noexcept override
     {}
 
     void OnEdictAllocated(edict_t *edict) noexcept override {}
@@ -486,25 +492,22 @@ public:
 
 TickratePlugin g_tickrate_plugin{};
 
-extern "C" TR_DLLEXPORT void *CreateInterface(const char *name, i32 *return_code) noexcept
+extern "C" TR_DLLEXPORT void *CreateInterface(cstr name, i32 *return_code) noexcept
 {
+    TickratePlugin *result{};
+
     // First call should be the latest version.
-    if (static bool once{}; !once && std::string_view{name}.find("ISERVERPLUGINCALLBACKS") != std::string_view::npos)
+    // v2 added `OnQueryCvarValueFinished`.
+    // v3 added `OnEdictAllocated`/`OnEdictFreed`.
+    if (sv_contains(name, "ISERVERPLUGINCALLBACKS"))
     {
-        if (return_code != nullptr)
-        {
-            *return_code = IFACE_OK;
-        }
-
-        once = true;
-
-        return &g_tickrate_plugin;
+        result = &g_tickrate_plugin;
     }
 
     if (return_code != nullptr)
     {
-        *return_code = IFACE_FAILED;
+        *return_code = result != nullptr ? IFACE_OK : IFACE_FAILED;
     }
 
-    return nullptr;
+    return result;
 }
