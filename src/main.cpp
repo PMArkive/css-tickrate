@@ -262,6 +262,9 @@ class Hooked_CServerGameDLL : public CServerGameDLL
 public:
     f32 hooked_GetTickInterval() const noexcept
     {
+        static usize num_calls{};
+        info("hooked_GetTickInterval {}\n", num_calls++);
+
         f32 interval = 1.0f / (f32)g_desired_tickrate;
 
         return interval;
