@@ -256,7 +256,7 @@ void info(std::string_view fmt_str, Args &&...args) noexcept
     g_Msg("[Tickrate] [info] %s", fmt::vformat(fmt_str, fmt::make_format_args(args...)).c_str());
 }
 
-f32 TR_THISCALL hooked_CServerGameDLL_GetTickInterval([[maybe_unused]] CServerGameDLL *instance) noexcept
+f32 TR_FASTCALL hooked_CServerGameDLL_GetTickInterval([[maybe_unused]] CServerGameDLL *instance) noexcept
 {
     f32 interval = 1.0f / (f32)g_desired_tickrate;
 
