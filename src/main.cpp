@@ -7,8 +7,8 @@
 #include <Zycore/Status.h>
 #include <Zydis/Zydis.h>
 #include <cstring>
-#include <string_view>
 #include <array>
+#include <string_view>
 #include <charconv>
 
 using CreateInterfaceFn      = void *(TR_CCALL *)(cstr name, i32 *return_code);
@@ -42,6 +42,11 @@ enum EQueryCvarValueStatus : i32
 };
 
 [[nodiscard]] bool sv_contains(std::string_view str, std::string_view delim) noexcept
+{
+    return str.find(delim) != std::string_view::npos;
+}
+
+[[nodiscard]] bool sv_contains(std::string_view str, std::string_view::value_type delim) noexcept
 {
     return str.find(delim) != std::string_view::npos;
 }
@@ -234,10 +239,10 @@ public:
     virtual void FireGameEvent(KeyValues *event) = 0;
 };
 
+// Global variables, etc.
 using Warning_fn = void(TR_CCALL *)(cstr, ...);
 using Msg_fn     = void(TR_CCALL *)(cstr, ...);
 
-// Global variables.
 Warning_fn       g_Warning{};
 Msg_fn           g_Msg{};
 CCommandLine    *g_cmdline{};
@@ -256,12 +261,16 @@ void info(std::string_view fmt_str, Args &&...args) noexcept
     g_Msg("[Tickrate] [info] %s", fmt::vformat(fmt_str, fmt::make_format_args(args...)).c_str());
 }
 
-f32 TR_FASTCALL hooked_CServerGameDLL_GetTickInterval([[maybe_unused]] CServerGameDLL *instance) noexcept
+class Hooked_CServerGameDLL : public CServerGameDLL
 {
-    f32 interval = 1.0f / (f32)g_desired_tickrate;
+public:
+    static f32 hooked_GetTickInterval([[maybe_unused]] CServerGameDLL *instance) noexcept
+    {
+        f32 interval = 1.0f / (f32)g_desired_tickrate;
 
-    return interval;
-}
+        return interval;
+    }
+};
 
 class TickratePlugin final : public IServerPluginCallbacks,
                              public IGameEventListener
@@ -272,6 +281,7 @@ public:
 
     bool Load(CreateInterfaceFn interface_factory, CreateInterfaceFn gameserver_factory) noexcept override
     {
+        // TODO: The filename on linux _might_ vary. Need more info.
         constexpr std::string_view tier0_lib_name = TR_OS_WINDOWS == 1 ? "tier0.dll" : "libtier0_srv.so";
 
         u8 *tier0_lib = os_get_module(tier0_lib_name);
@@ -335,7 +345,13 @@ public:
 
         info("Desired tickrate is {}.\n", g_desired_tickrate);
 
-        // TODO: This might be easier on Linux with `os_get_procedure`.
+        // TODO: This might be easier on Linux (I don't know if it's ever been on Windows) with `os_get_procedure`. We should attempt this first
+        // and then fall back to disasm.
+        // #ifdef TR_OS_LINUX
+        //         // dladdr(gameserver_factory)
+        //         // u8 *regs_symbol = os_get_procedure(dli_fbase, "s_pInterfaceRegs");
+        //         // deref...
+        // #endif
 
         u8 *createinterface = (u8 *)gameserver_factory;
 
@@ -361,7 +377,7 @@ public:
 
         auto regs_disasm_result = disasm_for_each(
             createinterface,
-            ZYDIS_MAX_INSTRUCTION_LENGTH * 25,
+            ZYDIS_MAX_INSTRUCTION_LENGTH * 25, // I hope this is enough :P
             [](auto &&result) noexcept
             {
                 // x86-64 is RIP-relative. x86-32 is absolute.
@@ -394,6 +410,7 @@ public:
             return false;
         }
 
+        // TODO: If this becomes an issue, we can just search for latest version... but for this, only one should be exported.
         CServerGameDLL *servergame{};
 
         for (auto *it = regs; it != nullptr; it = it->m_pNext)
@@ -416,7 +433,8 @@ public:
             return false;
         }
 
-        g_GetTickInterval_hook = safetyhook::create_inline(get_virtual(servergame, 10), hooked_CServerGameDLL_GetTickInterval);
+        // TODO: Switch to global VMT hooks when it's available.
+        g_GetTickInterval_hook = safetyhook::create_inline(get_virtual(servergame, 10), Hooked_CServerGameDLL::hooked_GetTickInterval);
         if (!g_GetTickInterval_hook)
         {
             warn("Failed to hook `CServerGameDLL::GetTickInterval` function.\n");

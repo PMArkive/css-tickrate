@@ -48,7 +48,8 @@
 #error "Tickrate: Unsupported OS."
 #endif
 
-#if TR_OS_WINDOWS
+// We only really care about calling conventions on 32-bit Windows.
+#if TR_OS_WINDOWS && TR_ARCH_X86_32
 #if TR_COMPILER_MSVC
 #define TR_CCALL    __cdecl
 #define TR_STDCALL  __stdcall
