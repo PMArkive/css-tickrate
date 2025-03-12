@@ -23,6 +23,7 @@ include(cmake/CPM.cmake)
 CPMAddPackage(NAME fmt
     GITHUB_REPOSITORY fmtlib/fmt
     GIT_TAG 11.1.4
+    EXCLUDE_FROM_ALL YES
     OPTIONS "FMT_INSTALL OFF")
 CPMAddPackage(NAME zydis
     GITHUB_REPOSITORY zyantific/zydis

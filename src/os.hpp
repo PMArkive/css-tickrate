@@ -4,6 +4,7 @@
 #include <string_view>
 
 [[nodiscard]] u8 *os_get_module(std::string_view module_name) noexcept;
+[[nodiscard]] u8 *os_get_module(u8 *address) noexcept;
 [[nodiscard]] u8 *os_get_procedure(u8 *module, std::string_view proc_name) noexcept;
 
 [[nodiscard]] inline u8 *os_get_procedure(std::string_view module_name, std::string_view proc_name) noexcept

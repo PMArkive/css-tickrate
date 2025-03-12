@@ -7,6 +7,8 @@
 #include <Zycore/Status.h>
 #include <Zydis/Zydis.h>
 #include <cstring>
+#include <cstdio>
+#include <utility>
 #include <array>
 #include <string_view>
 #include <charconv>
@@ -55,6 +57,26 @@ template <class T = u8 *>
 T get_virtual(const void *object, u16 index) noexcept
 {
     return (*(T **)object)[index];
+}
+
+// Tries to get server modules first.
+[[nodiscard]] u8 *se_get_module(std::string_view base_filename) noexcept
+{
+#if TR_OS_WINDOWS
+    constexpr std::array<std::string_view, 1> variants = {"{}.dll"};
+#else
+    constexpr std::array<std::string_view, 4> variants = {"lib{}_srv.so", "lib{}.so", "{}_i486.so", "{}.so"};
+#endif
+
+    for (auto &&variant : variants)
+    {
+        if (u8 *result = os_get_module(fmt::format(variant, base_filename)))
+        {
+            return result;
+        }
+    }
+
+    return nullptr;
 }
 
 [[nodiscard]] std::string_view zyan_status_str(ZyanStatus status) noexcept
@@ -121,8 +143,8 @@ struct Disasm
     };
 
     u8                     *ip{};
-    ZydisDecodedInstruction ix{};
-    ZydisDecodedOperand     operands[ZYDIS_MAX_OPERAND_COUNT]{};
+    ZydisDecodedInstruction ix;
+    ZydisDecodedOperand     operands[ZYDIS_MAX_OPERAND_COUNT];
 };
 
 [[nodiscard]] tl::expected<Disasm, Disasm::Error> disasm(u8 *ip, usize len = ZYDIS_MAX_INSTRUCTION_LENGTH) noexcept
@@ -240,31 +262,28 @@ public:
 };
 
 // Global variables, etc.
-using Warning_fn = void(TR_CCALL *)(cstr, ...);
-using Msg_fn     = void(TR_CCALL *)(cstr, ...);
-
-Warning_fn       g_Warning{};
-Msg_fn           g_Msg{};
 CCommandLine    *g_cmdline{};
 i32              g_desired_tickrate{};
 SafetyHookInline g_GetTickInterval_hook{};
 
 template <class... Args>
-void warn(std::string_view fmt_str, Args &&...args) noexcept
+void error(fmt::format_string<Args...> fmt, Args &&...args) noexcept
 {
-    g_Warning("[Tickrate] [warn] %s", fmt::vformat(fmt_str, fmt::make_format_args(args...)).c_str());
+    std::fprintf(stderr, "[Tickrate] [error] %s", fmt::format(fmt, std::forward<Args>(args)...).c_str());
+    std::fflush(stderr);
 }
 
 template <class... Args>
-void info(std::string_view fmt_str, Args &&...args) noexcept
+void info(fmt::format_string<Args...> fmt, Args &&...args) noexcept
 {
-    g_Msg("[Tickrate] [info] %s", fmt::vformat(fmt_str, fmt::make_format_args(args...)).c_str());
+    std::fprintf(stdout, "[Tickrate] [info] %s", fmt::format(fmt, std::forward<Args>(args)...).c_str());
+    std::fflush(stdout);
 }
 
 class Hooked_CServerGameDLL : public CServerGameDLL
 {
 public:
-    static f32 hooked_GetTickInterval([[maybe_unused]] CServerGameDLL *instance) noexcept
+    static f32 TR_THISCALL hooked_GetTickInterval([[maybe_unused]] CServerGameDLL *instance) noexcept
     {
         f32 interval = 1.0f / (f32)g_desired_tickrate;
 
@@ -281,41 +300,35 @@ public:
 
     bool Load(CreateInterfaceFn interface_factory, CreateInterfaceFn gameserver_factory) noexcept override
     {
-        // TODO: The filename on linux _might_ vary. Need more info.
-        constexpr std::string_view tier0_lib_name = TR_OS_WINDOWS == 1 ? "tier0.dll" : "libtier0_srv.so";
-
-        u8 *tier0_lib = os_get_module(tier0_lib_name);
-        if (tier0_lib == nullptr)
-        {
-            return false;
-        }
-
-        g_Warning = os_get_procedure<Warning_fn>(tier0_lib, "Warning");
-        if (g_Warning == nullptr)
-        {
-            return false;
-        }
-
-        g_Msg = os_get_procedure<Msg_fn>(tier0_lib, "Msg");
-        if (g_Msg == nullptr)
-        {
-            warn("Failed to find `Msg` procedure.\n");
-            return false;
-        }
-
         info("Loading...\n");
 
-        auto *CommandLine_Tier0 = os_get_procedure<CCommandLine *(TR_CCALL *)()>(tier0_lib, "CommandLine_Tier0");
+        u8 *server_createinterface = (u8 *)gameserver_factory;
+        u8 *server_module          = os_get_module(server_createinterface);
+        if (server_module == nullptr)
+        {
+            error("Failed to get server module.\n");
+            return false;
+        }
+
+        // TODO: I'd love to get rid of this... since I don't trust the `se_get_module` or `CCommandLine` virtual functions.
+        u8 *tier0_module = se_get_module("tier0");
+        if (tier0_module == nullptr)
+        {
+            error("Failed to get tier0 module.\n");
+            return false;
+        }
+
+        auto *CommandLine_Tier0 = os_get_procedure<CCommandLine *(TR_CCALL *)()>(tier0_module, "CommandLine_Tier0");
         if (CommandLine_Tier0 == nullptr)
         {
-            warn("Failed to find `CommandLine_Tier0` procedure.\n");
+            error("Failed to find `CommandLine_Tier0` procedure.\n");
             return false;
         }
 
         g_cmdline = CommandLine_Tier0();
         if (g_cmdline == nullptr)
         {
-            warn("Failed to get command line.\n");
+            error("Failed to get command line.\n");
             return false;
         }
 
@@ -324,93 +337,90 @@ public:
         auto *tickrate = g_cmdline->CheckParm("-tickrate", &tickrate_str);
         if (tickrate == nullptr || tickrate_str == nullptr)
         {
-            warn("Failed to set tickrate: No `-tickrate` command line parameter was passed.\n");
+            error("Bad tickrate: No `-tickrate` command line parameter was passed.\n");
             return false;
         }
 
         auto [ptr, ec] = std::from_chars(tickrate_str, tickrate_str + std::strlen(tickrate_str), g_desired_tickrate);
         if (ec != std::errc{})
         {
-            warn("Failed to convert `-tickrate` command line parameter.\n");
+            error("Bad tickrate: Failed to convert `-tickrate` command line parameter.\n");
             return false;
         }
 
-        if (g_desired_tickrate <= 10)
+        if (g_desired_tickrate < 11)
         {
-            warn(
-                "Failed to set tickrate: `-tickrate` command line parameter is too low (Desired tickrate is {}, minimum is 11).\n",
-                g_desired_tickrate);
+            error("Bad tickrate: `-tickrate` command line parameter is too low (Desired tickrate is {}, minimum is 11).\n", g_desired_tickrate);
             return false;
         }
 
         info("Desired tickrate is {}.\n", g_desired_tickrate);
 
-        // TODO: This might be easier on Linux (I don't know if it's ever been on Windows) with `os_get_procedure`. We should attempt this first
-        // and then fall back to disasm.
-        // #ifdef TR_OS_LINUX
-        //         // dladdr(gameserver_factory)
-        //         // u8 *regs_symbol = os_get_procedure(dli_fbase, "s_pInterfaceRegs");
-        //         // deref...
-        // #endif
+        InterfaceReg *regs;
 
-        u8 *createinterface = (u8 *)gameserver_factory;
-
-        // Check for a jump thunk. It should always be first.
-        // Some versions of the game have this for some reason. If there isn't one then we don't worry about it.
-        for (;;)
+        if (u8 *regs_symbol = os_get_procedure(server_module, "s_pInterfaceRegs"); regs_symbol != nullptr)
         {
-            auto thunk_disasm_result = disasm(createinterface);
-            if (!thunk_disasm_result.has_value())
+            regs = *(InterfaceReg **)regs_symbol;
+        }
+        else
+        {
+            // No symbol was found so we have to disasm manually.
+            // First we check for a jump thunk. Some versions of the game have this for some reason. If there isn't one then we don't worry about it.
+            for (;;)
             {
-                warn("Failed to decode first instruction in `CreateInterface`: {}\n", thunk_disasm_result.error().status_str());
+                auto thunk_disasm_result = disasm(server_createinterface);
+                if (!thunk_disasm_result.has_value())
+                {
+                    error("Failed to decode first instruction in `CreateInterface`: {}\n", thunk_disasm_result.error().status_str());
+                    return false;
+                }
+
+                auto &&thunk_disasm = thunk_disasm_result.value();
+                if (thunk_disasm.ix.mnemonic != ZYDIS_MNEMONIC_JMP)
+                {
+                    break;
+                }
+
+                server_createinterface += thunk_disasm.ix.length + (i32)thunk_disasm.operands[0].imm.value.s;
+            }
+
+            auto regs_disasm_result = disasm_for_each(
+                server_createinterface,
+                ZYDIS_MAX_INSTRUCTION_LENGTH * 25, // I hope this is enough :P
+                [](auto &&result) noexcept
+                {
+                    // x86-64 is RIP-relative. x86-32 is absolute.
+                    constexpr ZyanU16       op_size  = TR_ARCH_X86_64 == 1 ? 64 : 32;
+                    constexpr ZydisRegister mem_base = TR_ARCH_X86_64 == 1 ? ZYDIS_REGISTER_RIP : ZYDIS_REGISTER_NONE;
+
+                    return result.ix.mnemonic == ZYDIS_MNEMONIC_MOV && result.ix.operand_count_visible == 2
+                        && result.operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER && result.operands[0].size == op_size
+                        && result.operands[1].type == ZYDIS_OPERAND_TYPE_MEMORY && result.operands[1].size == op_size
+                        && result.operands[1].mem.segment == ZYDIS_REGISTER_DS && result.operands[1].mem.base == mem_base;
+                });
+            if (!regs_disasm_result.has_value())
+            {
+                error("Failed to find instruction containing `s_pInterfaceRegs`: {}\n", regs_disasm_result.error().status_str());
                 return false;
             }
 
-            auto &&thunk_disasm = thunk_disasm_result.value();
-            if (thunk_disasm.ix.mnemonic != ZYDIS_MNEMONIC_JMP)
-            {
-                break;
-            }
+            auto &&regs_disasm = regs_disasm_result.value();
 
-            createinterface += thunk_disasm.ix.length + (i32)thunk_disasm.operands[0].imm.value.s;
-        }
-
-        auto regs_disasm_result = disasm_for_each(
-            createinterface,
-            ZYDIS_MAX_INSTRUCTION_LENGTH * 25, // I hope this is enough :P
-            [](auto &&result) noexcept
-            {
-                // x86-64 is RIP-relative. x86-32 is absolute.
-                constexpr ZyanU16       op_size  = TR_ARCH_X86_64 == 1 ? 64 : 32;
-                constexpr ZydisRegister mem_base = TR_ARCH_X86_64 == 1 ? ZYDIS_REGISTER_RIP : ZYDIS_REGISTER_NONE;
-
-                return result.ix.mnemonic == ZYDIS_MNEMONIC_MOV && result.ix.operand_count_visible == 2
-                    && result.operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER && result.operands[0].size == op_size
-                    && result.operands[1].type == ZYDIS_OPERAND_TYPE_MEMORY && result.operands[1].size == op_size
-                    && result.operands[1].mem.segment == ZYDIS_REGISTER_DS && result.operands[1].mem.base == mem_base;
-            });
-        if (!regs_disasm_result.has_value())
-        {
-            warn("Failed to find instruction containing `s_pInterfaceRegs`: {}\n", regs_disasm_result.error().status_str());
-            return false;
-        }
-
-        auto &&regs_disasm = regs_disasm_result.value();
-
-        // x86-64 is RIP-relative. x86-32 is absolute.
+            // x86-64 is RIP-relative. x86-32 is absolute.
 #if TR_ARCH_X86_64
-        auto *regs = *(InterfaceReg **)(regs_disasm.ip + regs_disasm.ix.length + (i32)regs_disasm.operands[1].mem.disp.value);
+            regs = *(InterfaceReg **)(regs_disasm.ip + regs_disasm.ix.length + (i32)regs_disasm.operands[1].mem.disp.value);
 #else
-        auto *regs = *(InterfaceReg **)(usize)regs_disasm.operands[1].mem.disp.value;
+            regs = *(InterfaceReg **)(usize)regs_disasm.operands[1].mem.disp.value;
 #endif
+        }
 
         if (regs == nullptr)
         {
-            warn("Failed to find `s_pInterfaceRegs` (null).\n");
+            error("Failed to find `s_pInterfaceRegs` (null).\n");
             return false;
         }
 
-        // TODO: If this becomes an issue, we can just search for latest version... but for this, only one should be exported.
+        // TODO: If this becomes an issue, we can just search for latest version... but for now, only one should be exported.
         CServerGameDLL *servergame{};
 
         for (auto *it = regs; it != nullptr; it = it->m_pNext)
@@ -429,19 +439,21 @@ public:
 
         if (servergame == nullptr)
         {
-            warn("Failed to find `ServerGameDLL` interface.\n");
+            error("Failed to find `ServerGameDLL` interface.\n");
             return false;
         }
+
+        info("Applying hooks...\n");
 
         // TODO: Switch to global VMT hooks when it's available.
         g_GetTickInterval_hook = safetyhook::create_inline(get_virtual(servergame, 10), Hooked_CServerGameDLL::hooked_GetTickInterval);
         if (!g_GetTickInterval_hook)
         {
-            warn("Failed to hook `CServerGameDLL::GetTickInterval` function.\n");
+            error("Failed to hook `CServerGameDLL::GetTickInterval` function.\n");
             return false;
         }
 
-        info("Loaded.\n");
+        info("Loaded!\n");
 
         return true;
     }
