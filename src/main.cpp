@@ -2,12 +2,12 @@
 #include "type.hpp"
 #include "string.hpp"
 #include "os.hpp"
-#include <magic_enum/magic_enum.hpp>
-#include <safetyhook/safetyhook.hpp>
 #include <tl/expected.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <fmt/format.h>
 #include <Zycore/Status.h>
 #include <Zydis/Zydis.h>
+#include <safetyhook/safetyhook.hpp>
 #include <cstdio>
 #include <utility>
 #include <array>
