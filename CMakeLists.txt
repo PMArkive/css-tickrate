@@ -34,14 +34,24 @@ CPMAddPackage(NAME zydis
     "ZYDIS_BUILD_TOOLS OFF"
     "ZYDIS_BUILD_EXAMPLES OFF")
 CPMAddPackage("gh:TartanLlama/expected@1.1.0")
+CPMAddPackage("gh:Neargye/magic_enum@0.9.7")
+
+set(safetyhook_headers src/safetyhook/include/safetyhook/safetyhook.hpp)
+set(safetyhook_sources src/safetyhook/safetyhook.cpp)
+source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${safetyhook_headers} ${safetyhook_sources})
+add_library(safetyhook STATIC ${safetyhook_headers} ${safetyhook_sources})
+add_library(safetyhook::safetyhook ALIAS safetyhook)
+target_compile_features(safetyhook PUBLIC cxx_std_17)
+target_include_directories(safetyhook PRIVATE src/safetyhook/include/safetyhook PUBLIC src/safetyhook/include)
+target_link_libraries(safetyhook PUBLIC tl::expected Zydis)
 
 set(tickrate_headers
     src/common.hpp
     src/type.hpp
-    src/os.hpp
-    src/safetyhook/safetyhook.hpp)
+    src/string.hpp
+    src/os.hpp)
 set(tickrate_sources
-    src/safetyhook/safetyhook.cpp
+    src/string.cpp
     src/main.cpp)
 
 if (WIN32)
@@ -55,11 +65,13 @@ endif ()
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${tickrate_headers} ${tickrate_sources})
 add_library(tickrate SHARED ${tickrate_headers} ${tickrate_sources})
 target_compile_features(tickrate PRIVATE cxx_std_17)
-target_link_libraries(tickrate PRIVATE Zydis tl::expected fmt::fmt)
+target_compile_definitions(tickrate PRIVATE NOMINMAX)
+target_link_libraries(tickrate PRIVATE tl::expected magic_enum::magic_enum fmt::fmt safetyhook::safetyhook Zydis)
 
 if (WIN32)
     if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
         # Clang-CL
+        # I only have this one filled out because it's my primary compiler on Windows.
         target_compile_options(tickrate
             PRIVATE
             # /clang:-g

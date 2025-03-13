@@ -1,11 +1,22 @@
 #pragma once
 
 #include "type.hpp"
+#include <vector>
+#include <string>
 #include <string_view>
 
+// Returns the split command line of the running process.
+[[nodiscard]] std::vector<std::string> os_get_command_line() noexcept;
+
+// Returns a module handle in the running process.
 [[nodiscard]] u8 *os_get_module(std::string_view module_name) noexcept;
 [[nodiscard]] u8 *os_get_module(u8 *address) noexcept;
-[[nodiscard]] u8 *os_get_procedure(u8 *module, std::string_view proc_name) noexcept;
+
+// On Windows: Returns the input module handle.
+// On Linux: Returns the base address for a module handle.
+[[nodiscard]] u8 *os_get_module_base(u8 *handle) noexcept;
+
+[[nodiscard]] u8 *os_get_procedure(u8 *handle, std::string_view proc_name) noexcept;
 
 [[nodiscard]] inline u8 *os_get_procedure(std::string_view module_name, std::string_view proc_name) noexcept
 {
@@ -13,9 +24,9 @@
 }
 
 template <class T>
-[[nodiscard]] T os_get_procedure(u8 *module, std::string_view proc_name) noexcept
+[[nodiscard]] T os_get_procedure(u8 *handle, std::string_view proc_name) noexcept
 {
-    return (T)os_get_procedure(module, proc_name);
+    return (T)os_get_procedure(handle, proc_name);
 }
 
 template <class T>

@@ -1,8 +1,14 @@
 #include "os.hpp"
 #include "common.hpp"
+#include "string.hpp"
 
 #if TR_OS_WINDOWS
 #include <Windows.h>
+
+[[nodiscard]] std::vector<std::string> os_get_command_line() noexcept
+{
+    return str_split(GetCommandLine(), ' ');
+}
 
 [[nodiscard]] u8 *os_get_module(std::string_view module_name) noexcept
 {
@@ -20,13 +26,18 @@
     return (u8 *)result;
 }
 
-[[nodiscard]] u8 *os_get_procedure(u8 *module, std::string_view proc_name) noexcept
+[[nodiscard]] u8 *os_get_module_base(u8 *handle) noexcept
 {
-    if (module == nullptr || proc_name.empty())
+    return handle;
+}
+
+[[nodiscard]] u8 *os_get_procedure(u8 *handle, std::string_view proc_name) noexcept
+{
+    if (handle == nullptr || proc_name.empty())
     {
         return nullptr;
     }
 
-    return (u8 *)GetProcAddress((HMODULE)module, proc_name.data());
+    return (u8 *)GetProcAddress((HMODULE)handle, proc_name.data());
 }
 #endif

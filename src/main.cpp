@@ -1,12 +1,13 @@
 #include "common.hpp"
 #include "type.hpp"
+#include "string.hpp"
 #include "os.hpp"
-#include "safetyhook/safetyhook.hpp"
+#include <magic_enum/magic_enum.hpp>
+#include <safetyhook/safetyhook.hpp>
 #include <tl/expected.hpp>
 #include <fmt/format.h>
 #include <Zycore/Status.h>
 #include <Zydis/Zydis.h>
-#include <cstring>
 #include <cstdio>
 #include <utility>
 #include <array>
@@ -21,6 +22,9 @@ class KeyValues;
 class CCommand;
 
 using QueryCvarCookie_t = i32;
+
+constexpr f32 MINIMUM_TICK_INTERVAL = 0.001f;
+constexpr f32 MAXIMUM_TICK_INTERVAL = 0.1f;
 
 enum : i32
 {
@@ -43,40 +47,10 @@ enum EQueryCvarValueStatus : i32
     eQueryCvarValueStatus_CvarProtected,
 };
 
-[[nodiscard]] bool sv_contains(std::string_view str, std::string_view delim) noexcept
-{
-    return str.find(delim) != std::string_view::npos;
-}
-
-[[nodiscard]] bool sv_contains(std::string_view str, std::string_view::value_type delim) noexcept
-{
-    return str.find(delim) != std::string_view::npos;
-}
-
 template <class T = u8 *>
 T get_virtual(const void *object, u16 index) noexcept
 {
     return (*(T **)object)[index];
-}
-
-// Tries to get server modules first.
-[[nodiscard]] u8 *se_get_module(std::string_view base_filename) noexcept
-{
-#if TR_OS_WINDOWS
-    constexpr std::array<std::string_view, 1> variants = {"{}.dll"};
-#else
-    constexpr std::array<std::string_view, 4> variants = {"lib{}_srv.so", "lib{}.so", "{}_i486.so", "{}.so"};
-#endif
-
-    for (auto &&variant : variants)
-    {
-        if (u8 *result = os_get_module(fmt::format(variant, base_filename)))
-        {
-            return result;
-        }
-    }
-
-    return nullptr;
 }
 
 [[nodiscard]] std::string_view zyan_status_str(ZyanStatus status) noexcept
@@ -126,7 +100,7 @@ T get_virtual(const void *object, u16 index) noexcept
         return status < strings_zydis.size() ? strings_zydis[status] : "";
     }
 
-    return "";
+    return {};
 }
 
 struct Disasm
@@ -150,7 +124,6 @@ struct Disasm
 [[nodiscard]] tl::expected<Disasm, Disasm::Error> disasm(u8 *ip, usize len = ZYDIS_MAX_INSTRUCTION_LENGTH) noexcept
 {
     static ZydisDecoder decoder;
-
     if (static bool once{}; !once)
     {
 #if TR_ARCH_X86_64
@@ -167,8 +140,7 @@ struct Disasm
     }
 
     Disasm result{};
-
-    auto status = ZydisDecoderDecodeFull(&decoder, ip, len, &result.ix, result.operands);
+    auto   status = ZydisDecoderDecodeFull(&decoder, ip, len, &result.ix, result.operands);
     if (ZYAN_SUCCESS(status) == ZYAN_FALSE)
     {
         return tl::unexpected{Disasm::Error{ip, status}};
@@ -186,13 +158,13 @@ tl::expected<Disasm, Disasm::Error> disasm_for_each(u8 *ip, usize len, Pred &&pr
 
     for (u8 *i = ip; i < end;)
     {
-        auto result = disasm(i, (usize)(end - i));
-        if (!result.has_value())
+        auto result = disasm(i, end - i);
+        if (!result)
         {
             return tl::unexpected{result.error()};
         }
 
-        auto &&value = result.value();
+        auto &&value = *result;
         if (pred(value))
         {
             return value;
@@ -211,15 +183,6 @@ public:
     InstantiateInterfaceFn m_CreateFn;
     cstr                   m_pName;
     InterfaceReg          *m_pNext;
-};
-
-class CCommandLine
-{
-public:
-    [[nodiscard]] cstr CheckParm(cstr name, cstr *out_value = nullptr) const noexcept
-    {
-        return get_virtual<cstr(TR_THISCALL *)(decltype(this), cstr, cstr *)>(this, 3)(this, name, out_value);
-    }
 };
 
 class CServerGameDLL
@@ -262,8 +225,7 @@ public:
 };
 
 // Global variables, etc.
-CCommandLine    *g_cmdline{};
-i32              g_desired_tickrate{};
+u16              g_desired_tickrate{};
 SafetyHookInline g_GetTickInterval_hook{};
 
 template <class... Args>
@@ -310,47 +272,57 @@ public:
             return false;
         }
 
-        // TODO: I'd love to get rid of this... since I don't trust the `se_get_module` or `CCommandLine` virtual functions.
-        u8 *tier0_module = se_get_module("tier0");
-        if (tier0_module == nullptr)
-        {
-            error("Failed to get tier0 module.\n");
-            return false;
-        }
-
-        auto *CommandLine_Tier0 = os_get_procedure<CCommandLine *(TR_CCALL *)()>(tier0_module, "CommandLine_Tier0");
-        if (CommandLine_Tier0 == nullptr)
-        {
-            error("Failed to find `CommandLine_Tier0` procedure.\n");
-            return false;
-        }
-
-        g_cmdline = CommandLine_Tier0();
-        if (g_cmdline == nullptr)
+        auto cmdline = os_get_command_line();
+        if (cmdline.empty())
         {
             error("Failed to get command line.\n");
             return false;
         }
 
-        // Parse command line... or just let the engine handle it if there's no `-tickrate` parameter.
-        cstr  tickrate_str{};
-        auto *tickrate = g_cmdline->CheckParm("-tickrate", &tickrate_str);
-        if (tickrate == nullptr || tickrate_str == nullptr)
+        std::string_view tickrate_value{};
+        for (usize i{}; i < cmdline.size(); ++i)
         {
-            error("Bad tickrate: No `-tickrate` command line parameter was passed.\n");
+            // Next entry should be the value.
+            if (cmdline[i] == "-tickrate" && i + 1 < cmdline.size())
+            {
+                tickrate_value = cmdline[i + 1];
+                break;
+            }
+        }
+
+        if (tickrate_value.empty())
+        {
+            error("Bad tickrate: Failed to find `-tickrate` command line string.\n");
             return false;
         }
 
-        auto [ptr, ec] = std::from_chars(tickrate_str, tickrate_str + std::strlen(tickrate_str), g_desired_tickrate);
+        auto [ptr, ec] = std::from_chars(tickrate_value.data(), tickrate_value.data() + tickrate_value.size(), g_desired_tickrate);
         if (ec != std::errc{})
         {
-            error("Bad tickrate: Failed to convert `-tickrate` command line parameter.\n");
+            error("Bad tickrate: Failed to convert `-tickrate` command line value.\n");
             return false;
         }
 
-        if (g_desired_tickrate < 11)
+        // This is not a bug. They're swapped for a reason (we convert them to an int instead of comparing the float).
+        constexpr u16 min_tickrate = (u16)(1.0f / MAXIMUM_TICK_INTERVAL) + 1;
+        constexpr u16 max_tickrate = (u16)(1.0f / MINIMUM_TICK_INTERVAL) + 1;
+
+        if (g_desired_tickrate < min_tickrate)
         {
-            error("Bad tickrate: `-tickrate` command line parameter is too low (Desired tickrate is {}, minimum is 11).\n", g_desired_tickrate);
+            error(
+                "Bad tickrate: `-tickrate` command line value is too low (Desired tickrate is {}, minimum is {}). Server will continue with "
+                "default tickrate.\n",
+                g_desired_tickrate,
+                min_tickrate);
+            return false;
+        }
+        else if (g_desired_tickrate > max_tickrate)
+        {
+            error(
+                "Bad tickrate: `-tickrate` command line value is too high (Desired tickrate is {}, maximum is {}). Server will continue with "
+                "default tickrate.\n",
+                g_desired_tickrate,
+                max_tickrate);
             return false;
         }
 
@@ -369,13 +341,13 @@ public:
             for (;;)
             {
                 auto thunk_disasm_result = disasm(server_createinterface);
-                if (!thunk_disasm_result.has_value())
+                if (!thunk_disasm_result)
                 {
                     error("Failed to decode first instruction in `CreateInterface`: {}\n", thunk_disasm_result.error().status_str());
                     return false;
                 }
 
-                auto &&thunk_disasm = thunk_disasm_result.value();
+                auto &&thunk_disasm = *thunk_disasm_result;
                 if (thunk_disasm.ix.mnemonic != ZYDIS_MNEMONIC_JMP)
                 {
                     break;
@@ -398,19 +370,19 @@ public:
                         && result.operands[1].type == ZYDIS_OPERAND_TYPE_MEMORY && result.operands[1].size == op_size
                         && result.operands[1].mem.segment == ZYDIS_REGISTER_DS && result.operands[1].mem.base == mem_base;
                 });
-            if (!regs_disasm_result.has_value())
+            if (!regs_disasm_result)
             {
                 error("Failed to find instruction containing `s_pInterfaceRegs`: {}\n", regs_disasm_result.error().status_str());
                 return false;
             }
 
-            auto &&regs_disasm = regs_disasm_result.value();
+            auto &&regs_disasm = *regs_disasm_result;
 
             // x86-64 is RIP-relative. x86-32 is absolute.
 #if TR_ARCH_X86_64
             regs = *(InterfaceReg **)(regs_disasm.ip + regs_disasm.ix.length + (i32)regs_disasm.operands[1].mem.disp.value);
 #else
-            regs = *(InterfaceReg **)(usize)regs_disasm.operands[1].mem.disp.value;
+            regs = *(InterfaceReg **)((usize)regs_disasm.operands[1].mem.disp.value);
 #endif
         }
 
@@ -430,7 +402,7 @@ public:
                 continue;
             }
 
-            if (sv_contains(it->m_pName, "ServerGameDLL"))
+            if (str_sv_contains(it->m_pName, "ServerGameDLL"))
             {
                 servergame = (CServerGameDLL *)it->m_CreateFn();
                 break;
@@ -445,13 +417,21 @@ public:
 
         info("Applying hooks...\n");
 
+        // TODO: There's a chance that this virtual function might not always be index 10. Will need testing.
+        u8 *fn = get_virtual(servergame, 10);
+
         // TODO: Switch to global VMT hooks when it's available.
-        g_GetTickInterval_hook = safetyhook::create_inline(get_virtual(servergame, 10), Hooked_CServerGameDLL::hooked_GetTickInterval);
-        if (!g_GetTickInterval_hook)
+        auto hook_result = safetyhook::InlineHook::create(fn, Hooked_CServerGameDLL::hooked_GetTickInterval);
+        if (!hook_result)
         {
-            error("Failed to hook `CServerGameDLL::GetTickInterval` function.\n");
+            error(
+                "Failed to hook `CServerGameDLL::GetTickInterval` function: {} @ {}\n",
+                magic_enum::enum_name(hook_result.error().type),
+                (usize)hook_result.error().ip);
             return false;
         }
+
+        g_GetTickInterval_hook = std::move(*hook_result);
 
         info("Loaded!\n");
 
@@ -528,7 +508,7 @@ extern "C" TR_DLLEXPORT void *CreateInterface(cstr name, i32 *return_code) noexc
     // First call should be the latest version.
     // v2 added `OnQueryCvarValueFinished`.
     // v3 added `OnEdictAllocated`/`OnEdictFreed`.
-    if (sv_contains(name, "ISERVERPLUGINCALLBACKS"))
+    if (str_sv_contains(name, "ISERVERPLUGINCALLBACKS"))
     {
         result = &g_tickrate_plugin;
     }
