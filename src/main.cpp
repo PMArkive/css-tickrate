@@ -3,7 +3,6 @@
 #include "string.hpp"
 #include "os.hpp"
 #include <tl/expected.hpp>
-#include <magic_enum/magic_enum.hpp>
 #include <fmt/format.h>
 #include <Zycore/Status.h>
 #include <Zydis/Zydis.h>
@@ -51,6 +50,21 @@ template <class T = u8 *>
 T get_virtual(const void *object, u16 index) noexcept
 {
     return (*(T **)object)[index];
+}
+
+[[nodiscard]] std::string_view safetyhookinline_error_str(const SafetyHookInline::Error &error) noexcept
+{
+    constexpr std::array<std::string_view, 7> strings_inline_hook = {
+        "BAD_ALLOCATION",
+        "FAILED_TO_DECODE_INSTRUCTION",
+        "SHORT_JUMP_IN_TRAMPOLINE",
+        "IP_RELATIVE_INSTRUCTION_OUT_OF_RANGE",
+        "UNSUPPORTED_INSTRUCTION_IN_TRAMPOLINE",
+        "FAILED_TO_UNPROTECT",
+        "NOT_ENOUGH_SPACE",
+    };
+
+    return strings_inline_hook[error.type];
 }
 
 [[nodiscard]] std::string_view zyan_status_str(ZyanStatus status) noexcept
@@ -424,10 +438,9 @@ public:
         auto hook_result = safetyhook::InlineHook::create(fn, Hooked_CServerGameDLL::hooked_GetTickInterval);
         if (!hook_result)
         {
-            error(
-                "Failed to hook `CServerGameDLL::GetTickInterval` function: {} @ {}\n",
-                magic_enum::enum_name(hook_result.error().type),
-                (usize)hook_result.error().ip);
+            auto &&err = hook_result.error();
+            error("Failed to hook `CServerGameDLL::GetTickInterval` function: {} @ 0x{:X}\n", safetyhookinline_error_str(err), (usize)err.ip);
+
             return false;
         }
 

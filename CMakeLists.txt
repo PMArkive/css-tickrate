@@ -34,7 +34,6 @@ CPMAddPackage(NAME zydis
     "ZYDIS_BUILD_TOOLS OFF"
     "ZYDIS_BUILD_EXAMPLES OFF")
 CPMAddPackage("gh:TartanLlama/expected@1.1.0")
-CPMAddPackage("gh:Neargye/magic_enum@0.9.7")
 
 set(safetyhook_headers src/safetyhook/include/safetyhook/safetyhook.hpp)
 set(safetyhook_sources src/safetyhook/safetyhook.cpp)
@@ -66,7 +65,7 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${tickrate_headers} ${tickra
 add_library(tickrate SHARED ${tickrate_headers} ${tickrate_sources})
 target_compile_features(tickrate PRIVATE cxx_std_17)
 target_compile_definitions(tickrate PRIVATE NOMINMAX)
-target_link_libraries(tickrate PRIVATE tl::expected magic_enum::magic_enum fmt::fmt safetyhook::safetyhook Zydis)
+target_link_libraries(tickrate PRIVATE tl::expected fmt::fmt safetyhook::safetyhook Zydis)
 
 if (WIN32)
     if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
