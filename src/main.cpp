@@ -46,6 +46,21 @@ enum EQueryCvarValueStatus : i32
     eQueryCvarValueStatus_CvarProtected,
 };
 
+// Misc utils.
+template <class... Args>
+void error(fmt::format_string<Args...> fmt, Args &&...args) noexcept
+{
+    std::fprintf(stderr, "[Tickrate] [error] %s", fmt::format(fmt, std::forward<Args>(args)...).c_str());
+    std::fflush(stderr);
+}
+
+template <class... Args>
+void info(fmt::format_string<Args...> fmt, Args &&...args) noexcept
+{
+    std::fprintf(stdout, "[Tickrate] [info] %s", fmt::format(fmt, std::forward<Args>(args)...).c_str());
+    std::fflush(stdout);
+}
+
 template <class T = u8 *>
 T get_virtual(const void *object, u16 index) noexcept
 {
@@ -191,6 +206,7 @@ tl::expected<Disasm, Disasm::Error> disasm_for_each(u8 *ip, usize len, Pred &&pr
     return tl::unexpected{Disasm::Error{ip}};
 }
 
+// Engine.
 class InterfaceReg
 {
 public:
@@ -241,20 +257,6 @@ public:
 // Global variables, etc.
 u16              g_desired_tickrate{};
 SafetyHookInline g_GetTickInterval_hook{};
-
-template <class... Args>
-void error(fmt::format_string<Args...> fmt, Args &&...args) noexcept
-{
-    std::fprintf(stderr, "[Tickrate] [error] %s", fmt::format(fmt, std::forward<Args>(args)...).c_str());
-    std::fflush(stderr);
-}
-
-template <class... Args>
-void info(fmt::format_string<Args...> fmt, Args &&...args) noexcept
-{
-    std::fprintf(stdout, "[Tickrate] [info] %s", fmt::format(fmt, std::forward<Args>(args)...).c_str());
-    std::fflush(stdout);
-}
 
 class Hooked_CServerGameDLL : public CServerGameDLL
 {
@@ -344,6 +346,7 @@ public:
 
         InterfaceReg *regs;
 
+        // Check for the `s_pInterfaceRegs` symbol first.
         if (u8 *regs_symbol = os_get_procedure(server_module, "s_pInterfaceRegs"); regs_symbol != nullptr)
         {
             regs = *(InterfaceReg **)regs_symbol;
@@ -370,14 +373,15 @@ public:
                 server_createinterface += thunk_disasm.ix.length + (i32)thunk_disasm.operands[0].imm.value.s;
             }
 
+            // Find the first `mov reg, mem`.
             auto regs_disasm_result = disasm_for_each(
                 server_createinterface,
                 ZYDIS_MAX_INSTRUCTION_LENGTH * 25, // I hope this is enough :P
                 [](auto &&result) noexcept
                 {
                     // x86-64 is RIP-relative. x86-32 is absolute.
-                    constexpr ZyanU16       op_size  = TR_ARCH_X86_64 == 1 ? 64 : 32;
-                    constexpr ZydisRegister mem_base = TR_ARCH_X86_64 == 1 ? ZYDIS_REGISTER_RIP : ZYDIS_REGISTER_NONE;
+                    constexpr ZyanU16 op_size  = TR_ARCH_X86_64 == 1 ? 64 : 32;
+                    constexpr auto    mem_base = TR_ARCH_X86_64 == 1 ? ZYDIS_REGISTER_RIP : ZYDIS_REGISTER_NONE;
 
                     return result.ix.mnemonic == ZYDIS_MNEMONIC_MOV && result.ix.operand_count_visible == 2
                         && result.operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER && result.operands[0].size == op_size
@@ -406,7 +410,7 @@ public:
             return false;
         }
 
-        // TODO: If this becomes an issue, we can just search for latest version... but for now, only one should be exported.
+        // TODO: If this becomes an issue, we can just search for latest version... but for now, only the latest should be exist.
         CServerGameDLL *servergame{};
 
         for (auto *it = regs; it != nullptr; it = it->m_pNext)

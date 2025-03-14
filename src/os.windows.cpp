@@ -1,8 +1,5 @@
 #include "os.hpp"
-#include "common.hpp"
 #include "string.hpp"
-
-#if TR_OS_WINDOWS
 #include <Windows.h>
 
 [[nodiscard]] std::vector<std::string> os_get_command_line() noexcept
@@ -40,4 +37,3 @@
 
     return (u8 *)GetProcAddress((HMODULE)handle, proc_name.data());
 }
-#endif

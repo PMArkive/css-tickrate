@@ -54,5 +54,6 @@ Here are some examples (assuming a 64-bit OS):
 ## Thanks
 [SafetyHook](https://github.com/cursey/safetyhook)\
 [Zydis](https://github.com/zyantific/zydis)\
+[expected](https://github.com/TartanLlama/expected)\
 [{fmt}](https://github.com/fmtlib/fmt)\
 [CPM.cmake](https://github.com/cpm-cmake/CPM.cmake)

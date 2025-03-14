@@ -1,10 +1,7 @@
 #include "os.hpp"
-#include "common.hpp"
 #include "string.hpp"
 #include <limits>
 #include <fstream>
-
-#if TR_OS_LINUX
 #include <link.h>
 #include <dlfcn.h>
 
@@ -16,18 +13,21 @@
         return {};
     }
 
+    // Move to the end of the file.
     file.unsetf(std::ios::skipws);
-    file.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
+    file.ignore(std::numeric_limits<std::streamsize>::max());
 
     auto size = file.gcount();
-    if (size <= 0)
+    if (size == 0)
     {
         return {};
     }
 
+    // Clear flags and move back to the beginning of the file.
     file.clear();
     file.seekg(0, std::ios_base::beg);
 
+    // Read in the file.
     std::vector<u8> buf{};
     buf.resize(size);
 
@@ -36,7 +36,13 @@
         return {};
     }
 
-    return str_split({(char *)buf.data(), (usize)size}, '\0');
+    // Adjust size for any null terminators so it splits nicely.
+    while (size > 0 && buf[size - 1] == '\0')
+    {
+        --size;
+    }
+
+    return str_split({(cstr)buf.data(), (usize)size}, '\0');
 }
 
 [[nodiscard]] u8 *os_get_module(std::string_view module_name) noexcept
@@ -93,4 +99,3 @@
 
     return (u8 *)dlsym(handle, proc_name.data());
 }
-#endif

@@ -1,5 +1,4 @@
 #include "string.hpp"
-#include "type.hpp"
 
 [[nodiscard]] bool str_sv_contains(std::string_view str, std::string_view delim) noexcept
 {
@@ -13,11 +12,13 @@
 
 [[nodiscard]] std::vector<std::string> str_split(std::string_view str, char delim) noexcept
 {
-    std::vector<std::string> result{};
-    usize                    last{};
-    for (auto i = str.find(delim); i != std::string::npos; last = i + 1, i = str.find(delim, i + 1))
+    std::vector<std::string>    result{};
+    std::string_view::size_type i, last{};
+
+    while ((i = str.find(delim, last)) != std::string_view::npos)
     {
         result.emplace_back(str.substr(last, i - last));
+        last = i + 1;
     }
 
     result.emplace_back(str.substr(last));
