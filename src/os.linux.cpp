@@ -25,7 +25,7 @@
 
     // Clear flags and move back to the beginning of the file.
     file.clear();
-    file.seekg(0, std::ios_base::beg);
+    file.seekg(0, std::ios::beg);
 
     // Read in the file.
     std::vector<u8> buf{};
