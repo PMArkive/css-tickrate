@@ -10,7 +10,7 @@ Currently tested on:
 
 ## Usage & Installation
 
-Download a release zip from [here](https://github.com/angelfor3v3r/source-tickrate/releases) and extract the `addons` folder into your server's `cstrike` folder.
+Download a release zip from [here](https://github.com/angelfor3v3r/source-tickrate/releases) and extract the `addons` folder into your server's game mod folder (i.e. `cstrike`, `tf`, etc).
 
 You can now pass `-tickrate <Desired Tickrate>` on the command line.
 Example for **Counter-Strike: Source**:
