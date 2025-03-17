@@ -36,7 +36,22 @@ CPMAddPackage(NAME scope_guard
     GITHUB_REPOSITORY ricab/scope_guard
     VERSION 1.1.0
     DOWNLOAD_ONLY ON)
+CPMAddPackage(NAME lua
+    GITHUB_REPOSITORY lua/lua
+    VERSION 5.4.7
+    DOWNLOAD_ONLY YES)
 CPMAddPackage("gh:TartanLlama/expected@1.1.0")
+CPMAddPackage("gh:ThePhD/sol2@3.3.0")
+
+# Lua has no CMake support, so we create our own target.
+if (lua_ADDED)
+    file(GLOB lua_headers ${lua_SOURCE_DIR}/*.h)
+    file(GLOB lua_sources ${lua_SOURCE_DIR}/*.c)
+    list(REMOVE_ITEM lua_sources ${lua_SOURCE_DIR}/lua.c ${lua_SOURCE_DIR}/luac.c ${lua_SOURCE_DIR}/onelua.c)
+    source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${lua_headers} ${lua_sources})
+    add_library(lua STATIC ${lua_headers} ${lua_sources})
+    target_include_directories(lua PUBLIC $<BUILD_INTERFACE:${lua_SOURCE_DIR}>)
+endif ()
 
 if (scope_guard_ADDED)
     add_library(scope_guard INTERFACE)
@@ -75,7 +90,15 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${tickrate_headers} ${tickra
 add_library(tickrate SHARED ${tickrate_headers} ${tickrate_sources})
 target_compile_features(tickrate PRIVATE cxx_std_17)
 target_compile_definitions(tickrate PRIVATE NOMINMAX)
-target_link_libraries(tickrate PRIVATE tl::expected scope_guard::scope_guard fmt::fmt safetyhook::safetyhook Zydis)
+target_link_libraries(tickrate
+    PRIVATE
+    tl::expected
+    scope_guard::scope_guard
+    fmt::fmt
+    safetyhook::safetyhook
+    sol2::sol2
+    Zydis
+    lua)
 
 if (WIN32)
     if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
