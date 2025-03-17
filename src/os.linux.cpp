@@ -1,48 +1,23 @@
 #include "os.hpp"
 #include "string.hpp"
-#include <limits>
-#include <fstream>
 #include <link.h>
 #include <dlfcn.h>
 
 [[nodiscard]] std::vector<std::string> os_get_command_line() noexcept
 {
-    std::ifstream file("/proc/self/cmdline", std::ios::binary);
-    if (!file)
+    auto buf = os_read_binary_file("/proc/self/cmdline");
+    if (buf.empty())
     {
         return {};
     }
 
-    // Move to the end of the file.
-    file.unsetf(std::ios::skipws);
-    file.ignore(std::numeric_limits<std::streamsize>::max());
-
-    auto size = file.gcount();
-    if (size == 0)
+    // Adjust size for any trailing null terminators so it splits nicely.
+    while (!buf.empty() && buf.back() == '\0')
     {
-        return {};
+        buf.pop_back();
     }
 
-    // Clear flags and move back to the beginning of the file.
-    file.clear();
-    file.seekg(0, std::ios::beg);
-
-    // Read in the file.
-    std::vector<u8> buf{};
-    buf.resize(size);
-
-    if (!file.read((char *)buf.data(), size))
-    {
-        return {};
-    }
-
-    // Adjust size for any null terminators so it splits nicely.
-    while (size > 0 && buf[size - 1] == '\0')
-    {
-        --size;
-    }
-
-    return str_split({(cstr)buf.data(), (usize)size}, '\0');
+    return str_split({(cstr)buf.data(), buf.size()}, '\0');
 }
 
 [[nodiscard]] u8 *os_get_module(std::string_view module_name) noexcept

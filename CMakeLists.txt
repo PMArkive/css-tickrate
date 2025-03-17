@@ -23,7 +23,6 @@ include(cmake/CPM.cmake)
 CPMAddPackage(NAME fmt
     GITHUB_REPOSITORY fmtlib/fmt
     GIT_TAG 11.1.4
-    EXCLUDE_FROM_ALL YES
     OPTIONS "FMT_INSTALL OFF")
 CPMAddPackage(NAME zydis
     GITHUB_REPOSITORY zyantific/zydis
@@ -33,7 +32,17 @@ CPMAddPackage(NAME zydis
     "ZYDIS_FEATURE_ENCODER OFF"
     "ZYDIS_BUILD_TOOLS OFF"
     "ZYDIS_BUILD_EXAMPLES OFF")
+CPMAddPackage(NAME scope_guard
+    GITHUB_REPOSITORY ricab/scope_guard
+    VERSION 1.1.0
+    DOWNLOAD_ONLY ON)
 CPMAddPackage("gh:TartanLlama/expected@1.1.0")
+
+if (scope_guard_ADDED)
+    add_library(scope_guard INTERFACE)
+    add_library(scope_guard::scope_guard ALIAS scope_guard)
+    target_include_directories(scope_guard INTERFACE ${scope_guard_SOURCE_DIR})
+endif ()
 
 set(safetyhook_headers src/safetyhook/include/safetyhook/safetyhook.hpp)
 set(safetyhook_sources src/safetyhook/safetyhook.cpp)
@@ -51,6 +60,7 @@ set(tickrate_headers
     src/os.hpp)
 set(tickrate_sources
     src/string.cpp
+    src/os.cpp
     src/main.cpp)
 
 if (WIN32)
@@ -65,7 +75,7 @@ source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${tickrate_headers} ${tickra
 add_library(tickrate SHARED ${tickrate_headers} ${tickrate_sources})
 target_compile_features(tickrate PRIVATE cxx_std_17)
 target_compile_definitions(tickrate PRIVATE NOMINMAX)
-target_link_libraries(tickrate PRIVATE tl::expected fmt::fmt safetyhook::safetyhook Zydis)
+target_link_libraries(tickrate PRIVATE tl::expected scope_guard::scope_guard fmt::fmt safetyhook::safetyhook Zydis)
 
 if (WIN32)
     if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")

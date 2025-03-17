@@ -5,6 +5,9 @@
 #include <string>
 #include <string_view>
 
+// Reads a binary file to a vector.
+[[nodiscard]] std::vector<u8> os_read_binary_file(std::string_view path) noexcept;
+
 // Returns the split command line of the running process.
 [[nodiscard]] std::vector<std::string> os_get_command_line() noexcept;
 
