@@ -22,15 +22,15 @@
 
 [[nodiscard]] u8 *os_get_module(std::string_view module_name) noexcept
 {
-    auto *handle = dlopen(module_name.empty() ? nullptr : module_name.data(), RTLD_NOW | RTLD_NOLOAD);
-    if (handle == nullptr)
+    auto *result = dlopen(module_name.empty() ? nullptr : module_name.data(), RTLD_NOW | RTLD_NOLOAD);
+    if (result == nullptr)
     {
         return nullptr;
     }
 
-    dlclose(handle);
+    dlclose(result);
 
-    return (u8 *)handle;
+    return (u8 *)result;
 }
 
 [[nodiscard]] u8 *os_get_module(u8 *address) noexcept
