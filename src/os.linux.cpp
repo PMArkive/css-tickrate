@@ -1,9 +1,8 @@
 #include "os.hpp"
-#include "string.hpp"
 #include <link.h>
 #include <dlfcn.h>
 
-[[nodiscard]] std::vector<std::string> os_get_command_line() noexcept
+[[nodiscard]] std::string os_get_command_line() noexcept
 {
     auto buf = os_read_binary_file("/proc/self/cmdline");
     if (buf.empty())
@@ -11,13 +10,7 @@
         return {};
     }
 
-    // Adjust size for any trailing null terminators so it splits nicely.
-    while (!buf.empty() && buf.back() == '\0')
-    {
-        buf.pop_back();
-    }
-
-    return str_split({(cstr)buf.data(), buf.size()}, '\0');
+    return {(cstr)buf.data(), buf.size()};
 }
 
 [[nodiscard]] u8 *os_get_module(std::string_view module_name) noexcept

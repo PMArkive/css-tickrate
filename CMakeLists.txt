@@ -71,11 +71,15 @@ target_link_libraries(safetyhook PUBLIC tl::expected Zydis)
 set(tickrate_headers
     src/common.hpp
     src/type.hpp
-    src/string.hpp
-    src/os.hpp)
+    src/os.hpp
+    src/utl.hpp
+    src/lua/lua_state.hpp
+    src/lua/lua_loader.hpp)
 set(tickrate_sources
-    src/string.cpp
     src/os.cpp
+    src/utl.cpp
+    src/lua/lua_state.cpp
+    src/lua/lua_loader.cpp
     src/main.cpp)
 
 if (WIN32)
@@ -89,7 +93,8 @@ endif ()
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${tickrate_headers} ${tickrate_sources})
 add_library(tickrate SHARED ${tickrate_headers} ${tickrate_sources})
 target_compile_features(tickrate PRIVATE cxx_std_17)
-target_compile_definitions(tickrate PRIVATE NOMINMAX)
+target_compile_definitions(tickrate PRIVATE NOMINMAX SOL_NO_EXCEPTIONS=1 SOL_ALL_SAFETIES_ON=1 SOL_PRINT_ERRORS=0)
+target_include_directories(tickrate PRIVATE src)
 target_link_libraries(tickrate
     PRIVATE
     tl::expected
@@ -151,3 +156,5 @@ file(WRITE "${tr_vdf_filepath}"
     "    \"file\" \"addons/${tr_bin_filename}\"\n"
     "}\n")
 install(FILES "${tr_vdf_filepath}" DESTINATION "addons")
+install(DIRECTORY DESTINATION "addons/tickrate")
+install(DIRECTORY DESTINATION "addons/tickrate/autorun")

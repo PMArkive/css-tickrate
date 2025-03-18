@@ -1,18 +1,14 @@
 #include "common.hpp"
 #include "type.hpp"
-#include "string.hpp"
+#include "utl.hpp"
 #include "os.hpp"
-#include <tl/expected.hpp>
-#include <fmt/format.h>
-#include <Zycore/Status.h>
-#include <Zydis/Zydis.h>
+#include "lua/lua_loader.hpp"
 #include <safetyhook/safetyhook.hpp>
-#include <cstdio>
-#include <utility>
-#include <array>
 #include <string_view>
 #include <charconv>
+#include <filesystem>
 
+// Engine stuff.
 using CreateInterfaceFn      = void *(TR_CCALL *)(cstr name, i32 *return_code);
 using InstantiateInterfaceFn = void *(TR_CCALL *)();
 
@@ -46,167 +42,6 @@ enum EQueryCvarValueStatus : i32
     eQueryCvarValueStatus_CvarProtected,
 };
 
-// Misc utils.
-template <class... Args>
-void error(fmt::format_string<Args...> fmt, Args &&...args) noexcept
-{
-    std::fprintf(stderr, "[Tickrate] [error] %s", fmt::format(fmt, std::forward<Args>(args)...).c_str());
-    std::fflush(stderr);
-}
-
-template <class... Args>
-void info(fmt::format_string<Args...> fmt, Args &&...args) noexcept
-{
-    std::fprintf(stdout, "[Tickrate] [info] %s", fmt::format(fmt, std::forward<Args>(args)...).c_str());
-    std::fflush(stdout);
-}
-
-template <class T = u8 *>
-T get_virtual(const void *object, u16 index) noexcept
-{
-    return (*(T **)object)[index];
-}
-
-[[nodiscard]] std::string_view safetyhookinline_error_str(const SafetyHookInline::Error &error) noexcept
-{
-    constexpr std::array<std::string_view, 7> strings_inline_hook = {
-        "BAD_ALLOCATION",
-        "FAILED_TO_DECODE_INSTRUCTION",
-        "SHORT_JUMP_IN_TRAMPOLINE",
-        "IP_RELATIVE_INSTRUCTION_OUT_OF_RANGE",
-        "UNSUPPORTED_INSTRUCTION_IN_TRAMPOLINE",
-        "FAILED_TO_UNPROTECT",
-        "NOT_ENOUGH_SPACE",
-    };
-
-    return strings_inline_hook[error.type];
-}
-
-[[nodiscard]] std::string_view zyan_status_str(ZyanStatus status) noexcept
-{
-    // Taken from: https://github.com/zyantific/zydis/blob/v4.1.1/tools/ZydisToolsShared.c#L79-L151
-    constexpr std::array<std::string_view, 12> strings_zycore = {/* 00 */ "SUCCESS",
-                                                                 /* 01 */ "FAILED",
-                                                                 /* 02 */ "TRUE",
-                                                                 /* 03 */ "FALSE",
-                                                                 /* 04 */ "INVALID_ARGUMENT",
-                                                                 /* 05 */ "INVALID_OPERATION",
-                                                                 /* 06 */ "NOT_FOUND",
-                                                                 /* 07 */ "OUT_OF_RANGE",
-                                                                 /* 08 */ "INSUFFICIENT_BUFFER_SIZE",
-                                                                 /* 09 */ "NOT_ENOUGH_MEMORY",
-                                                                 /* 0A */ "NOT_ENOUGH_MEMORY",
-                                                                 /* 0B */ "BAD_SYSTEMCALL"};
-
-    constexpr std::array<std::string_view, 13> strings_zydis = {/* 00 */ "NO_MORE_DATA",
-                                                                /* 01 */ "DECODING_ERROR",
-                                                                /* 02 */ "INSTRUCTION_TOO_LONG",
-                                                                /* 03 */ "BAD_REGISTER",
-                                                                /* 04 */ "ILLEGAL_LOCK",
-                                                                /* 05 */ "ILLEGAL_LEGACY_PFX",
-                                                                /* 06 */ "ILLEGAL_REX",
-                                                                /* 07 */ "INVALID_MAP",
-                                                                /* 08 */ "MALFORMED_EVEX",
-                                                                /* 09 */ "MALFORMED_MVEX",
-                                                                /* 0A */ "INVALID_MASK",
-                                                                /* 0B */ "SKIP_TOKEN",
-                                                                /* 0C */ "IMPOSSIBLE_INSTRUCTION"};
-
-    // if (ZYAN_STATUS_MODULE(status) >= ZYAN_MODULE_USER)
-    // {
-    //     return "User";
-    // }
-
-    if (ZYAN_STATUS_MODULE(status) == ZYAN_MODULE_ZYCORE)
-    {
-        status = ZYAN_STATUS_CODE(status);
-        return status < strings_zycore.size() ? strings_zycore[status] : "";
-    }
-
-    if (ZYAN_STATUS_MODULE(status) == ZYAN_MODULE_ZYDIS)
-    {
-        status = ZYAN_STATUS_CODE(status);
-        return status < strings_zydis.size() ? strings_zydis[status] : "";
-    }
-
-    return {};
-}
-
-struct Disasm
-{
-    struct Error
-    {
-        u8        *ip{};
-        ZyanStatus status{ZYAN_STATUS_FAILED};
-
-        [[nodiscard]] auto status_str() const noexcept
-        {
-            return zyan_status_str(status);
-        }
-    };
-
-    u8                     *ip{};
-    ZydisDecodedInstruction ix;
-    ZydisDecodedOperand     operands[ZYDIS_MAX_OPERAND_COUNT];
-};
-
-[[nodiscard]] tl::expected<Disasm, Disasm::Error> disasm(u8 *ip, usize len = ZYDIS_MAX_INSTRUCTION_LENGTH) noexcept
-{
-    static ZydisDecoder decoder;
-    if (static bool once{}; !once)
-    {
-#if TR_ARCH_X86_64
-        auto status = ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LONG_64, ZYDIS_STACK_WIDTH_64);
-#else
-        auto status = ZydisDecoderInit(&decoder, ZYDIS_MACHINE_MODE_LEGACY_32, ZYDIS_STACK_WIDTH_32);
-#endif
-        if (ZYAN_SUCCESS(status) == ZYAN_FALSE)
-        {
-            return tl::unexpected{Disasm::Error{ip, status}};
-        }
-
-        once = true;
-    }
-
-    Disasm result{};
-    auto   status = ZydisDecoderDecodeFull(&decoder, ip, len, &result.ix, result.operands);
-    if (ZYAN_SUCCESS(status) == ZYAN_FALSE)
-    {
-        return tl::unexpected{Disasm::Error{ip, status}};
-    }
-
-    result.ip = ip;
-
-    return result;
-}
-
-template <class Pred>
-tl::expected<Disasm, Disasm::Error> disasm_for_each(u8 *ip, usize len, Pred &&pred) noexcept
-{
-    u8 *end = ip + len;
-
-    for (u8 *i = ip; i < end;)
-    {
-        auto result = disasm(i, end - i);
-        if (!result)
-        {
-            return tl::unexpected{result.error()};
-        }
-
-        auto &&value = *result;
-        if (pred(value))
-        {
-            return value;
-        }
-
-        i += value.ix.length;
-    }
-
-    // This means we've scanned everything successfully but the predicate didn't return.
-    return tl::unexpected{Disasm::Error{ip}};
-}
-
-// Engine.
 class InterfaceReg
 {
 public:
@@ -255,6 +90,7 @@ public:
 };
 
 // Global variables, etc.
+LuaScriptLoader  g_lua_loader{};
 u16              g_desired_tickrate{};
 SafetyHookInline g_GetTickInterval_hook{};
 
@@ -269,6 +105,9 @@ public:
     }
 };
 
+// Dummy function so we can find our own module.
+void find_me() noexcept {}
+
 class TickratePlugin final : public IServerPluginCallbacks,
                              public IGameEventListener
 {
@@ -278,44 +117,90 @@ public:
 
     bool Load(CreateInterfaceFn interface_factory, CreateInterfaceFn gameserver_factory) noexcept override
     {
-        info("Loading...\n");
+        utl::print_info("Loading...\n");
+
+        // Find our own module.
+        u8 *our_module = os_get_module((u8 *)find_me);
+        if (our_module == nullptr)
+        {
+            utl::print_error("Failed to get our own module.\n");
+            return false;
+        }
+
+        auto our_module_full_path = os_get_module_full_path(our_module);
+        if (our_module_full_path.empty())
+        {
+            utl::print_error("Failed to get our own module's full path.\n");
+            return false;
+        }
+
+        // Make sure autorun directory exists.
+        std::filesystem::path autorun_dir{};
+        {
+            std::filesystem::path addons_path = our_module_full_path;
+            addons_path                       = addons_path.parent_path().make_preferred();
+
+            auto plugin_dir = addons_path / "tickrate";
+            autorun_dir     = plugin_dir / "autorun";
+
+            std::error_code ec;
+            if (std::filesystem::create_directories(autorun_dir, ec); ec != std::error_code{})
+            {
+                utl::print_error("Failed to create autorun directory.\n");
+                return false;
+            }
+        }
 
         u8 *server_createinterface = (u8 *)gameserver_factory;
         u8 *server_module          = os_get_module(server_createinterface);
         if (server_module == nullptr)
         {
-            error("Failed to get server module.\n");
+            utl::print_error("Failed to get server module.\n");
             return false;
         }
 
-        auto cmdline = os_get_command_line();
+        auto cmdline = os_get_split_command_line();
         if (cmdline.empty())
         {
-            error("Failed to get command line.\n");
+            utl::print_error("Failed to get command line.\n");
             return false;
         }
 
-        std::string_view tickrate_value{};
+        std::string_view mod_value{}, tickrate_value{};
         for (usize i{}; i < cmdline.size(); ++i)
         {
-            // Next entry should be the value.
-            if (cmdline[i] == "-tickrate" && i + 1 < cmdline.size())
+            // Check if the next entry has a value. Some options require this.
+            if (i + 1 < cmdline.size())
             {
-                tickrate_value = cmdline[i + 1];
-                break;
+                if (mod_value.empty() && cmdline[i] == "-game")
+                {
+                    mod_value = cmdline[i + 1];
+                }
+
+                if (tickrate_value.empty() && cmdline[i] == "-tickrate")
+                {
+                    tickrate_value = cmdline[i + 1];
+                }
             }
         }
 
+        if (mod_value.empty())
+        {
+            mod_value = "hl2";
+        }
+
+        utl::print_info("mod = {}\n", mod_value);
+
         if (tickrate_value.empty())
         {
-            error("Bad tickrate: Failed to find `-tickrate` command line string.\n");
+            utl::print_error("Bad tickrate: Failed to find `-tickrate` command line string.\n");
             return false;
         }
 
         auto [ptr, ec] = std::from_chars(tickrate_value.data(), tickrate_value.data() + tickrate_value.size(), g_desired_tickrate);
         if (ec != std::errc{})
         {
-            error("Bad tickrate: Failed to convert `-tickrate` command line value.\n");
+            utl::print_error("Bad tickrate: Failed to convert `-tickrate` command line value.\n");
             return false;
         }
 
@@ -325,7 +210,7 @@ public:
 
         if (g_desired_tickrate < min_tickrate)
         {
-            error(
+            utl::print_error(
                 "Bad tickrate: `-tickrate` command line value is too low (Desired tickrate is {}, minimum is {}). Server will continue with "
                 "default tickrate.\n",
                 g_desired_tickrate,
@@ -334,7 +219,7 @@ public:
         }
         else if (g_desired_tickrate > max_tickrate)
         {
-            error(
+            utl::print_error(
                 "Bad tickrate: `-tickrate` command line value is too high (Desired tickrate is {}, maximum is {}). Server will continue with "
                 "default tickrate.\n",
                 g_desired_tickrate,
@@ -342,7 +227,7 @@ public:
             return false;
         }
 
-        info("Desired tickrate is {}.\n", g_desired_tickrate);
+        utl::print_info("Desired tickrate is {}.\n", g_desired_tickrate);
 
         InterfaceReg *regs;
 
@@ -357,10 +242,10 @@ public:
             // First we check for a jump thunk. Some versions of the game have this for some reason. If there isn't one then we don't worry about it.
             for (;;)
             {
-                auto thunk_disasm_result = disasm(server_createinterface);
+                auto thunk_disasm_result = utl::disasm(server_createinterface);
                 if (!thunk_disasm_result)
                 {
-                    error("Failed to decode first instruction in `CreateInterface`: {}\n", thunk_disasm_result.error().status_str());
+                    utl::print_error("Failed to decode first instruction in `CreateInterface`: {}\n", thunk_disasm_result.error().status_str());
                     return false;
                 }
 
@@ -374,7 +259,7 @@ public:
             }
 
             // Find the first `mov reg, mem`.
-            auto regs_disasm_result = disasm_for_each(
+            auto regs_disasm_result = utl::disasm_for_each(
                 server_createinterface,
                 ZYDIS_MAX_INSTRUCTION_LENGTH * 25, // I hope this is enough :P
                 [](auto &&result) noexcept
@@ -390,7 +275,7 @@ public:
                 });
             if (!regs_disasm_result)
             {
-                error("Failed to find instruction containing `s_pInterfaceRegs`: {}\n", regs_disasm_result.error().status_str());
+                utl::print_error("Failed to find instruction containing `s_pInterfaceRegs`: {}\n", regs_disasm_result.error().status_str());
                 return false;
             }
 
@@ -406,7 +291,7 @@ public:
 
         if (regs == nullptr)
         {
-            error("Failed to find `s_pInterfaceRegs` (null).\n");
+            utl::print_error("Failed to find `s_pInterfaceRegs` (null).\n");
             return false;
         }
 
@@ -420,7 +305,7 @@ public:
                 continue;
             }
 
-            if (str_sv_contains(it->m_pName, "ServerGameDLL"))
+            if (utl::sv_contains(it->m_pName, "ServerGameDLL"))
             {
                 servergame = (CServerGameDLL *)it->m_CreateFn();
                 break;
@@ -429,28 +314,38 @@ public:
 
         if (servergame == nullptr)
         {
-            error("Failed to find `ServerGameDLL` interface.\n");
+            utl::print_error("Failed to find `ServerGameDLL` interface.\n");
             return false;
         }
 
-        info("Applying hooks...\n");
+        utl::print_info("Applying hooks...\n");
 
         // TODO: There's a chance that this virtual function might not always be index 10. Will need testing.
-        u8 *fn = get_virtual(servergame, 10);
+        u8 *fn = utl::get_virtual(servergame, 10);
 
         // TODO: Switch to global VMT hooks when it's available.
         auto hook_result = safetyhook::InlineHook::create(fn, Hooked_CServerGameDLL::hooked_GetTickInterval);
         if (!hook_result)
         {
             auto &&err = hook_result.error();
-            error("Failed to hook `CServerGameDLL::GetTickInterval` function: {} @ 0x{:X}\n", safetyhookinline_error_str(err), (usize)err.ip);
+            utl::print_error(
+                "Failed to hook `CServerGameDLL::GetTickInterval` function: {} @ 0x{:X}\n", utl::safetyhookinline_error_str(err), (usize)err.ip);
 
             return false;
         }
 
         g_GetTickInterval_hook = std::move(*hook_result);
 
-        info("Loaded!\n");
+        // Set up Lua.
+        if (!g_lua_loader.init(autorun_dir))
+        {
+            utl::print_error("Failed to initialize Lua loader.\n");
+            return false;
+        }
+
+        g_lua_loader.on_load();
+
+        utl::print_info("Loaded!\n");
 
         return true;
     }
@@ -459,7 +354,7 @@ public:
     {
         g_GetTickInterval_hook = {};
 
-        info("Unloaded.\n");
+        utl::print_info("Unloaded.\n");
     }
 
     void Pause() noexcept override {}
@@ -475,7 +370,10 @@ public:
 
     void ServerActivate(edict_t *edict_list, i32 edict_count, i32 client_max) noexcept override {}
 
-    void GameFrame(bool simulating) noexcept override {}
+    void GameFrame(bool simulating) noexcept override
+    {
+        g_lua_loader.on_game_frame(simulating);
+    }
 
     void LevelShutdown() noexcept override {}
 
@@ -525,7 +423,7 @@ extern "C" TR_DLLEXPORT void *CreateInterface(cstr name, i32 *return_code) noexc
     // First call should be the latest version.
     // v2 added `OnQueryCvarValueFinished`.
     // v3 added `OnEdictAllocated`/`OnEdictFreed`.
-    if (str_sv_contains(name, "ISERVERPLUGINCALLBACKS"))
+    if (utl::sv_contains(name, "ISERVERPLUGINCALLBACKS"))
     {
         result = &g_tickrate_plugin;
     }

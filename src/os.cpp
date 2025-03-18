@@ -1,5 +1,6 @@
 #include "os.hpp"
 #include "common.hpp"
+#include "utl.hpp"
 #include <scope_guard.hpp>
 #include <cstdio>
 #include <array>
@@ -52,7 +53,7 @@
     for (;;)
     {
         std::array<u8, chunk_size> tmp;
-        if (auto read_amount = std::fread(tmp.data(), 1, chunk_size, file); read_amount > 0)
+        if (usize read_amount = std::fread(tmp.data(), 1, chunk_size, file); read_amount > 0)
         {
             result.insert(result.end(), tmp.begin(), tmp.begin() + (decltype(tmp)::difference_type)read_amount);
         }
@@ -70,4 +71,45 @@
     }
 
     return result;
+}
+
+[[nodiscard]] std::vector<std::string> os_get_split_command_line() noexcept
+{
+    auto cmdline = os_get_command_line();
+    if (cmdline.empty())
+    {
+        return {};
+    }
+
+    // Remove any trailing null terminators first.
+    while (!cmdline.empty() && cmdline.back() == '\0')
+    {
+        cmdline.pop_back();
+    }
+
+    // On Linux the string uses null terminators. Replace those with spaces.
+#if TR_OS_LINUX
+    std::replace(cmdline.begin(), cmdline.end(), '\0', ' ');
+#endif
+
+    auto split = utl::split(cmdline, ' ');
+
+    // Clean up entries.
+    for (auto &&it = split.begin(); it != split.end();)
+    {
+        // Trim any whitespace.
+        utl::trim(*it);
+
+        // If it's totally empty then remove it.
+        if (it->empty())
+        {
+            it = split.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
+    return split;
 }

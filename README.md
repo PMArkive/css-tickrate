@@ -53,6 +53,7 @@ Here are some examples (assuming a 64-bit OS):
 
 ## Thanks
 [SafetyHook](https://github.com/cursey/safetyhook)\
+[REFramework](https://github.com/praydog/REFramework) (For the Lua API)\
 [Zydis](https://github.com/zyantific/zydis)\
 [expected](https://github.com/TartanLlama/expected)\
 [{fmt}](https://github.com/fmtlib/fmt)\
