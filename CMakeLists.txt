@@ -41,7 +41,7 @@ CPMAddPackage(NAME lua
     VERSION 5.4.7
     DOWNLOAD_ONLY YES)
 CPMAddPackage("gh:TartanLlama/expected@1.1.0")
-CPMAddPackage("gh:ThePhD/sol2@3.3.0")
+CPMAddPackage("gh:ThePhD/sol2@3.5.0")
 
 # Lua has no CMake support, so we create our own target.
 if (lua_ADDED)

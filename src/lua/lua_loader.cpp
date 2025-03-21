@@ -3,7 +3,7 @@
 
 bool LuaScriptLoader::init(const std::filesystem::path &autorun_dir) noexcept
 {
-    std::scoped_lock lock{m_lua_mutex};
+    std::scoped_lock _{m_lua_mutex};
 
     m_autorun_dir = autorun_dir;
 
@@ -39,7 +39,7 @@ void LuaScriptLoader::unlock() noexcept
 
 lua_State *LuaScriptLoader::create_state() noexcept
 {
-    std::scoped_lock lock{m_lua_mutex};
+    std::scoped_lock _{m_lua_mutex};
 
     auto &&result = m_states.emplace_back(std::make_shared<LuaScriptState>(false));
 
@@ -53,7 +53,7 @@ lua_State *LuaScriptLoader::create_state() noexcept
 
 void LuaScriptLoader::delete_state(lua_State *state) noexcept
 {
-    std::scoped_lock lock{m_lua_mutex};
+    std::scoped_lock _{m_lua_mutex};
 
     // Don't allow deletion of main state.
     if (state == m_main_state->lua().lua_state())
@@ -72,7 +72,7 @@ void LuaScriptLoader::delete_state(lua_State *state) noexcept
 
 void LuaScriptLoader::reset_scripts() noexcept
 {
-    std::scoped_lock lock{m_lua_mutex};
+    std::scoped_lock _{m_lua_mutex};
 
     // Only call the `on_script_reset` callbacks on the main state.
     if (m_main_state != nullptr)
@@ -120,7 +120,7 @@ void LuaScriptLoader::reset_scripts() noexcept
 
 void LuaScriptLoader::on_load() noexcept
 {
-    std::scoped_lock lock{m_lua_mutex};
+    std::scoped_lock _{m_lua_mutex};
 
     // Run autorun scripts on plugin load.
     reset_scripts();
@@ -133,7 +133,7 @@ void LuaScriptLoader::on_load() noexcept
 
 void LuaScriptLoader::on_game_frame(bool simulating) noexcept
 {
-    std::scoped_lock lock{m_lua_mutex};
+    std::scoped_lock _{m_lua_mutex};
 
     // Destruct any states that are pending deletion.
     for (auto &&s : m_states_to_delete)
@@ -152,7 +152,7 @@ void LuaScriptLoader::on_game_frame(bool simulating) noexcept
 
 void LuaScriptLoader::on_level_init(std::string_view map_name) noexcept
 {
-    std::scoped_lock lock{m_lua_mutex};
+    std::scoped_lock _{m_lua_mutex};
 
     for (auto &&state : m_states)
     {
@@ -162,7 +162,7 @@ void LuaScriptLoader::on_level_init(std::string_view map_name) noexcept
 
 void LuaScriptLoader::on_level_shutdown() noexcept
 {
-    std::scoped_lock lock{m_lua_mutex};
+    std::scoped_lock _{m_lua_mutex};
 
     for (auto &&state : m_states)
     {

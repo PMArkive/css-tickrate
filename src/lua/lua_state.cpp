@@ -4,9 +4,35 @@
 #include "game_data.hpp"
 #include <algorithm>
 
+void lua_panic_handler(sol::optional<std::string> maybe_msg) noexcept
+{
+    if (maybe_msg)
+    {
+        utl::print_error("Lua panic occurred:\n{}\n", *maybe_msg);
+    }
+
+    // When this function exits, Lua will exhibit default behavior and abort().
+}
+
+i32 lua_exception_handler(
+    lua_State *state, [[maybe_unused]] sol::optional<const std::exception &> maybe_exception, sol::string_view description) noexcept
+{
+    // state is the lua state, which you can wrap in a state_view if necessary maybe_exception will contain exception, if it exists description will
+    // either be the what() of the exception or a description saying that we hit the general-case catch(...).
+    utl::print_error("Lua exception occurred:\n{}\n", description);
+
+    // you must push 1 element onto the stack to be transported through as the error object in Lua note that Lua -- and 99.5% of all Lua users and
+    // libraries -- expects a string so we push a single string (in our case, the description of the error).
+    return sol::stack::push(state, description);
+}
+
 LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is_main_state}
 {
-    std::scoped_lock lock{m_exec_mutex};
+    std::scoped_lock _{m_exec_mutex};
+
+    m_lua.set_panic(sol::c_call<decltype(&lua_panic_handler), &lua_panic_handler>);
+    m_lua.set_exception_handler(&lua_exception_handler);
+    // sol::protected_function::set_default_handler();
 
     m_lua.registry()["tr_state"] = this;
 
@@ -34,16 +60,41 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
 
     auto tr = m_lua.create_table();
 
-    tr.new_usertype<GameData>("GameData", "new", sol::no_constructor, "get_mod_name", [](GameData &self) noexcept { return self.mod_name; });
     tr["gamedata"] = &g_game_data;
 
-    tr["square"] = [](f64 x) noexcept
+    tr["print_info"] = [](sol::this_state state, const sol::object &value) noexcept
+    {
+        if (value.is<std::string_view>())
+        {
+            utl::print_info("[Lua] {}\n", value.as<std::string_view>());
+        }
+        else
+        {
+            auto *str = luaL_tolstring(state, -1, nullptr);
+
+            utl::print_info("[Lua] {}\n", str);
+
+            lua_pop(state, 1);
+        }
+    };
+
+    // tr["print_error"] = [](const sol::object &value) noexcept
+    // {
+    //     if (value.is<std::string_view>())
+    //     {
+    //     }
+    // };
+
+    m_lua["print"] = tr["print_info"];
+
+    tr["print_error"] = [](f64 x) noexcept
     {
         return x * x;
     };
+
     tr["add_callback"] = [this](const std::string &name, const sol::object &fn) noexcept
     {
-        std::scoped_lock lock{m_exec_mutex};
+        std::scoped_lock _{m_exec_mutex};
 
         if (!fn.is<sol::protected_function>())
         {
@@ -69,12 +120,14 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         return true;
     };
 
+    m_lua.new_usertype<GameData>("GameData", "new", sol::no_constructor, "get_mod_name", [](GameData &self) noexcept { return self.mod_name; });
+
     m_lua["tr"] = tr;
 }
 
 LuaScriptState::~LuaScriptState() noexcept
 {
-    std::scoped_lock lock{m_exec_mutex};
+    std::scoped_lock _{m_exec_mutex};
 }
 
 std::optional<LuaScriptState::CallbackID> LuaScriptState::str_to_callback_id(const std::string &name) const noexcept
@@ -90,7 +143,7 @@ std::optional<LuaScriptState::CallbackID> LuaScriptState::str_to_callback_id(con
 
 tl::expected<void, std::string> LuaScriptState::run_script_file(const std::filesystem::path &full_path) noexcept
 {
-    std::scoped_lock lock{m_exec_mutex};
+    std::scoped_lock _{m_exec_mutex};
 
     // Only allow requiring from the directory the script was run from.
     auto &&old_path  = m_lua["package"]["path"];
@@ -111,7 +164,7 @@ tl::expected<void, std::string> LuaScriptState::run_script_file(const std::files
     m_lua["package"]["path"]  = new_path;
     m_lua["package"]["cpath"] = new_cpath;
 
-    auto result = m_lua.safe_script_file(full_path.string());
+    auto result = m_lua.safe_script_file(full_path.string(), &sol::script_pass_on_error);
 
     m_lua["package"]["path"]  = old_path;
     m_lua["package"]["cpath"] = old_cpath;
@@ -127,7 +180,7 @@ tl::expected<void, std::string> LuaScriptState::run_script_file(const std::files
 
 void LuaScriptState::on_script_reset() noexcept
 {
-    std::scoped_lock lock{m_exec_mutex};
+    std::scoped_lock _{m_exec_mutex};
 
     for (auto &&cb : m_callbacks[CallbackID::on_script_reset])
     {
@@ -141,7 +194,7 @@ void LuaScriptState::on_script_reset() noexcept
 
 void LuaScriptState::on_load() noexcept
 {
-    std::scoped_lock lock{m_exec_mutex};
+    std::scoped_lock _{m_exec_mutex};
 
     for (auto &&cb : m_callbacks[CallbackID::on_load])
     {
@@ -155,7 +208,7 @@ void LuaScriptState::on_load() noexcept
 
 void LuaScriptState::on_level_init(std::string_view map_name) noexcept
 {
-    std::scoped_lock lock{m_exec_mutex};
+    std::scoped_lock _{m_exec_mutex};
 
     for (auto &&cb : m_callbacks[CallbackID::on_level_init])
     {
@@ -169,7 +222,7 @@ void LuaScriptState::on_level_init(std::string_view map_name) noexcept
 
 void LuaScriptState::on_level_shutdown() noexcept
 {
-    std::scoped_lock lock{m_exec_mutex};
+    std::scoped_lock _{m_exec_mutex};
 
     for (auto &&cb : m_callbacks[CallbackID::on_level_shutdown])
     {
@@ -183,7 +236,7 @@ void LuaScriptState::on_level_shutdown() noexcept
 
 void LuaScriptState::on_game_frame(bool simulating) noexcept
 {
-    std::scoped_lock lock{m_exec_mutex};
+    std::scoped_lock _{m_exec_mutex};
 
     for (auto &&cb : m_callbacks[CallbackID::on_game_frame])
     {
