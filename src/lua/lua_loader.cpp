@@ -3,50 +3,76 @@
 
 bool LuaScriptLoader::init(const std::filesystem::path &autorun_dir) noexcept
 {
-    std::scoped_lock lock{m_mutex};
+    std::scoped_lock lock{m_lua_mutex};
 
     m_autorun_dir = autorun_dir;
 
     return true;
 }
 
-void LuaScriptLoader::on_load() noexcept
+void LuaScriptLoader::lock() noexcept
 {
-    std::scoped_lock lock{m_mutex};
-
-    // Run autorun scripts on plugin load.
-    reset_scripts();
+    m_lua_mutex.lock();
 
     for (auto &&state : m_states)
     {
-        state->on_load();
+        state->lock();
+    }
+
+    ++m_lock_depth;
+}
+
+void LuaScriptLoader::unlock() noexcept
+{
+    for (auto &&state : m_states)
+    {
+        state->unlock();
+    }
+
+    m_lua_mutex.unlock();
+
+    if (m_lock_depth > 0)
+    {
+        --m_lock_depth;
     }
 }
 
-void LuaScriptLoader::on_game_frame(bool simulating) noexcept
+lua_State *LuaScriptLoader::create_state() noexcept
 {
-    std::scoped_lock lock{m_mutex};
+    std::scoped_lock lock{m_lua_mutex};
 
-    // Destruct any states that are pending deletion.
-    for (auto &&state_to_delete : m_states_to_delete)
+    auto &&result = m_states.emplace_back(std::make_shared<LuaScriptState>(false));
+
+    for (usize i{}; i < m_lock_depth; ++i)
     {
-        m_states.erase(
-            std::remove_if(
-                m_states.begin(), m_states.end(), [&state_to_delete](auto &&state) noexcept { return state->lua().lua_state() == state_to_delete; }),
-            m_states.end());
+        m_states.back()->lock();
     }
 
-    m_states_to_delete.clear();
+    return result->lua().lua_state();
+}
 
-    for (auto &&state : m_states)
+void LuaScriptLoader::delete_state(lua_State *state) noexcept
+{
+    std::scoped_lock lock{m_lua_mutex};
+
+    // Don't allow deletion of main state.
+    if (state == m_main_state->lua().lua_state())
     {
-        state->on_game_frame(simulating);
+        return;
     }
+
+    auto found = std::find_if(m_states.begin(), m_states.end(), [state](auto &&s) noexcept { return state == s->lua().lua_state(); });
+    if (found == m_states.end())
+    {
+        return;
+    }
+
+    m_states_to_delete.emplace_back(state);
 }
 
 void LuaScriptLoader::reset_scripts() noexcept
 {
-    std::scoped_lock lock{m_mutex};
+    std::scoped_lock lock{m_lua_mutex};
 
     // Only call the `on_script_reset` callbacks on the main state.
     if (m_main_state != nullptr)
@@ -89,5 +115,57 @@ void LuaScriptLoader::reset_scripts() noexcept
         {
             utl::print_error("[LuaScriptLoader] Failed to load autorun script: `{}`.\n{}\n", path.filename().string(), run_result.error());
         }
+    }
+}
+
+void LuaScriptLoader::on_load() noexcept
+{
+    std::scoped_lock lock{m_lua_mutex};
+
+    // Run autorun scripts on plugin load.
+    reset_scripts();
+
+    for (auto &&state : m_states)
+    {
+        state->on_load();
+    }
+}
+
+void LuaScriptLoader::on_game_frame(bool simulating) noexcept
+{
+    std::scoped_lock lock{m_lua_mutex};
+
+    // Destruct any states that are pending deletion.
+    for (auto &&s : m_states_to_delete)
+    {
+        m_states.erase(
+            std::remove_if(m_states.begin(), m_states.end(), [s](auto &&state) noexcept { return state->lua().lua_state() == s; }), m_states.end());
+    }
+
+    m_states_to_delete.clear();
+
+    for (auto &&state : m_states)
+    {
+        state->on_game_frame(simulating);
+    }
+}
+
+void LuaScriptLoader::on_level_init(std::string_view map_name) noexcept
+{
+    std::scoped_lock lock{m_lua_mutex};
+
+    for (auto &&state : m_states)
+    {
+        state->on_level_init(map_name);
+    }
+}
+
+void LuaScriptLoader::on_level_shutdown() noexcept
+{
+    std::scoped_lock lock{m_lua_mutex};
+
+    for (auto &&state : m_states)
+    {
+        state->on_level_shutdown();
     }
 }

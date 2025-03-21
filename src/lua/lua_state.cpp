@@ -1,11 +1,12 @@
 #include "lua_state.hpp"
 #include "common.hpp"
 #include "utl.hpp"
+#include "game_data.hpp"
 #include <algorithm>
 
 LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is_main_state}
 {
-    std::scoped_lock lock{m_lua_mutex};
+    std::scoped_lock lock{m_exec_mutex};
 
     m_lua.registry()["tr_state"] = this;
 
@@ -31,14 +32,18 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
     os["rename"]    = sol::nil;
     os["setlocale"] = sol::nil;
 
-    auto tr      = m_lua.create_table();
+    auto tr = m_lua.create_table();
+
+    tr.new_usertype<GameData>("GameData", "new", sol::no_constructor, "get_mod_name", [](GameData &self) noexcept { return self.mod_name; });
+    tr["gamedata"] = &g_game_data;
+
     tr["square"] = [](f64 x) noexcept
     {
         return x * x;
     };
     tr["add_callback"] = [this](const std::string &name, const sol::object &fn) noexcept
     {
-        std::scoped_lock lock{m_lua_mutex};
+        std::scoped_lock lock{m_exec_mutex};
 
         if (!fn.is<sol::protected_function>())
         {
@@ -53,7 +58,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
 
         auto &&cbs = m_callbacks[*found_id];
 
-        // Already exists? Don't add.
+        // Don't add another hook if the function is the same.
         if (std::find(cbs.begin(), cbs.end(), fn) != cbs.end())
         {
             return false;
@@ -65,6 +70,11 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
     };
 
     m_lua["tr"] = tr;
+}
+
+LuaScriptState::~LuaScriptState() noexcept
+{
+    std::scoped_lock lock{m_exec_mutex};
 }
 
 std::optional<LuaScriptState::CallbackID> LuaScriptState::str_to_callback_id(const std::string &name) const noexcept
@@ -80,7 +90,7 @@ std::optional<LuaScriptState::CallbackID> LuaScriptState::str_to_callback_id(con
 
 tl::expected<void, std::string> LuaScriptState::run_script_file(const std::filesystem::path &full_path) noexcept
 {
-    std::scoped_lock lock{m_lua_mutex};
+    std::scoped_lock lock{m_exec_mutex};
 
     // Only allow requiring from the directory the script was run from.
     auto &&old_path  = m_lua["package"]["path"];
@@ -115,23 +125,9 @@ tl::expected<void, std::string> LuaScriptState::run_script_file(const std::files
     return {};
 }
 
-void LuaScriptState::on_load() noexcept
-{
-    std::scoped_lock lock{m_lua_mutex};
-
-    for (auto &&cb : m_callbacks[CallbackID::on_load])
-    {
-        if (auto result = cb(); !result.valid())
-        {
-            sol::error err = result;
-            utl::print_error("[LuaScriptState] on_load error: {}\n", err.what());
-        }
-    }
-}
-
 void LuaScriptState::on_script_reset() noexcept
 {
-    std::scoped_lock lock{m_lua_mutex};
+    std::scoped_lock lock{m_exec_mutex};
 
     for (auto &&cb : m_callbacks[CallbackID::on_script_reset])
     {
@@ -143,9 +139,51 @@ void LuaScriptState::on_script_reset() noexcept
     }
 }
 
+void LuaScriptState::on_load() noexcept
+{
+    std::scoped_lock lock{m_exec_mutex};
+
+    for (auto &&cb : m_callbacks[CallbackID::on_load])
+    {
+        if (auto result = cb(); !result.valid())
+        {
+            sol::error err = result;
+            utl::print_error("[LuaScriptState] on_load error: {}\n", err.what());
+        }
+    }
+}
+
+void LuaScriptState::on_level_init(std::string_view map_name) noexcept
+{
+    std::scoped_lock lock{m_exec_mutex};
+
+    for (auto &&cb : m_callbacks[CallbackID::on_level_init])
+    {
+        if (auto result = cb(map_name); !result.valid())
+        {
+            sol::error err = result;
+            utl::print_error("[LuaScriptState] on_level_init error: {}\n", err.what());
+        }
+    }
+}
+
+void LuaScriptState::on_level_shutdown() noexcept
+{
+    std::scoped_lock lock{m_exec_mutex};
+
+    for (auto &&cb : m_callbacks[CallbackID::on_level_shutdown])
+    {
+        if (auto result = cb(); !result.valid())
+        {
+            sol::error err = result;
+            utl::print_error("[LuaScriptState] on_level_shutdown error: {}\n", err.what());
+        }
+    }
+}
+
 void LuaScriptState::on_game_frame(bool simulating) noexcept
 {
-    std::scoped_lock lock{m_lua_mutex};
+    std::scoped_lock lock{m_exec_mutex};
 
     for (auto &&cb : m_callbacks[CallbackID::on_game_frame])
     {

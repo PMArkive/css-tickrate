@@ -2,6 +2,7 @@
 #include "type.hpp"
 #include "utl.hpp"
 #include "os.hpp"
+#include "game_data.hpp"
 #include "lua/lua_loader.hpp"
 #include <safetyhook/safetyhook.hpp>
 #include <string_view>
@@ -191,6 +192,8 @@ public:
 
         utl::print_info("mod = {}\n", mod_value);
 
+        g_game_data.mod_name = mod_value;
+
         if (tickrate_value.empty())
         {
             utl::print_error("Bad tickrate: Failed to find `-tickrate` command line string.\n");
@@ -366,7 +369,10 @@ public:
         return "Tickrate (angelfor3v3r)";
     }
 
-    void LevelInit(cstr map_name) noexcept override {}
+    void LevelInit(cstr map_name) noexcept override
+    {
+        g_lua_loader.on_level_init(map_name);
+    }
 
     void ServerActivate(edict_t *edict_list, i32 edict_count, i32 client_max) noexcept override {}
 
@@ -375,7 +381,10 @@ public:
         g_lua_loader.on_game_frame(simulating);
     }
 
-    void LevelShutdown() noexcept override {}
+    void LevelShutdown() noexcept override
+    {
+        g_lua_loader.on_level_shutdown();
+    }
 
     void ClientActive(edict_t *edict) noexcept override {}
 
