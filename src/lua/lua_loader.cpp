@@ -41,7 +41,7 @@ lua_State *LuaScriptLoader::create_state() noexcept
 {
     std::scoped_lock _{m_lua_mutex};
 
-    auto &&result = m_states.emplace_back(std::make_shared<LuaScriptState>(false));
+    auto &result = m_states.emplace_back(std::make_shared<LuaScriptState>(false));
 
     for (usize i{}; i < m_lock_depth; ++i)
     {
@@ -61,7 +61,7 @@ void LuaScriptLoader::delete_state(lua_State *state) noexcept
         return;
     }
 
-    auto found = std::find_if(m_states.begin(), m_states.end(), [state](auto &&s) noexcept { return state == s->lua().lua_state(); });
+    auto found = std::find_if(m_states.begin(), m_states.end(), [state](auto &s) noexcept { return state == s->lua().lua_state(); });
     if (found == m_states.end())
     {
         return;
@@ -96,7 +96,7 @@ void LuaScriptLoader::reset_scripts() noexcept
             continue;
         }
 
-        auto &&path = it->path();
+        auto &path = it->path();
         if (path.extension() != ".lua")
         {
             continue;
@@ -139,7 +139,7 @@ void LuaScriptLoader::on_game_frame(bool simulating) noexcept
     for (auto &&s : m_states_to_delete)
     {
         m_states.erase(
-            std::remove_if(m_states.begin(), m_states.end(), [s](auto &&state) noexcept { return state->lua().lua_state() == s; }), m_states.end());
+            std::remove_if(m_states.begin(), m_states.end(), [s](auto &state) noexcept { return state->lua().lua_state() == s; }), m_states.end());
     }
 
     m_states_to_delete.clear();

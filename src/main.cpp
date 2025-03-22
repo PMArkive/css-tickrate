@@ -274,7 +274,7 @@ public:
                     return false;
                 }
 
-                auto &&thunk_disasm = *thunk_disasm_result;
+                auto &thunk_disasm = *thunk_disasm_result;
                 if (thunk_disasm.ix.mnemonic != ZYDIS_MNEMONIC_JMP)
                 {
                     break;
@@ -287,7 +287,7 @@ public:
             auto regs_disasm_result = utl::disasm_for_each(
                 server_createinterface,
                 ZYDIS_MAX_INSTRUCTION_LENGTH * 25, // I hope this is enough :P
-                [](auto &&result) noexcept
+                [](auto &result) noexcept
                 {
                     // x86-64 is RIP-relative. x86-32 is absolute.
                     constexpr ZyanU16 op_size  = TR_ARCH_X86_64 == 1 ? 64 : 32;
@@ -304,7 +304,7 @@ public:
                 return false;
             }
 
-            auto &&regs_disasm = *regs_disasm_result;
+            auto &regs_disasm = *regs_disasm_result;
 
             // x86-64 is RIP-relative. x86-32 is absolute.
 #if TR_ARCH_X86_64
@@ -377,7 +377,7 @@ public:
         auto hook_result = safetyhook::InlineHook::create(fn, Hooked_CServerGameDLL::hooked_GetTickInterval);
         if (!hook_result)
         {
-            auto &&err = hook_result.error();
+            auto &err = hook_result.error();
             utl::print_error(
                 "Failed to hook `CServerGameDLL::GetTickInterval` function: {} @ 0x{:X}", utl::safetyhookinline_error_str(err), (usize)err.ip);
 

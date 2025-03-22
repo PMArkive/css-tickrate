@@ -95,7 +95,7 @@
     auto split = utl::split(cmdline, ' ');
 
     // Clean up entries.
-    for (auto &&it = split.begin(); it != split.end();)
+    for (auto it = split.begin(); it != split.end();)
     {
         utl::trim(*it);
 

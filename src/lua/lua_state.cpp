@@ -49,7 +49,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         sol::lib::utf8);
 
     // Restrict the Lua OS library.
-    auto &&os       = m_lua["os"];
+    auto os         = m_lua["os"];
     os["execute"]   = sol::nil;
     os["exit"]      = sol::nil;
     os["getenv"]    = sol::nil;
@@ -121,7 +121,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
             return false;
         }
 
-        auto &&cbs = m_callbacks[*found_id];
+        auto &cbs = m_callbacks[*found_id];
 
         // Don't add another hook if the function is the same.
         if (std::find(cbs.begin(), cbs.end(), fn) != cbs.end())

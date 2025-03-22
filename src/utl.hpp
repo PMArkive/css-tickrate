@@ -90,7 +90,7 @@ namespace utl
                 return tl::unexpected{result.error()};
             }
 
-            auto &&value = *result;
+            auto &value = *result;
             if (pred(value))
             {
                 return value;
