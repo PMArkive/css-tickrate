@@ -51,9 +51,30 @@ public:
     InterfaceReg          *m_pNext;
 };
 
+class CGlobalVars
+{
+public:
+};
+
 class CServerGameDLL
 {
 public:
+};
+
+class IVEngineServer
+{
+public:
+};
+
+class CPlayerInfoManager
+{
+public:
+    // virtual IPlayerInfo *GetPlayerInfo( edict_t *pEdict );
+
+    [[nodiscard]] CGlobalVars *GetGlobalVars() const noexcept
+    {
+        return utl::get_virtual<CGlobalVars *(TR_THISCALL *)(decltype(this))>(this, 1)(this);
+    }
 };
 
 // ISERVERPLUGINCALLBACKS003
@@ -232,6 +253,7 @@ public:
 
         utl::print_info("Desired tickrate is {}.", g_desired_tickrate);
 
+        // TOOD: Make this a func to return regs for a module.
         InterfaceReg *regs;
 
         // Check for the `s_pInterfaceRegs` symbol first.
@@ -299,7 +321,8 @@ public:
         }
 
         // TODO: If this becomes an issue, we can just search for latest version... but for now, only the latest should be exist.
-        CServerGameDLL *servergame{};
+        CServerGameDLL     *server_game{};
+        CPlayerInfoManager *player_info_manager{};
 
         for (auto *it = regs; it != nullptr; it = it->m_pNext)
         {
@@ -308,23 +331,47 @@ public:
                 continue;
             }
 
-            if (utl::sv_contains(it->m_pName, "ServerGameDLL"))
+            if (server_game == nullptr && utl::sv_contains(it->m_pName, "ServerGameDLL"))
             {
-                servergame = (CServerGameDLL *)it->m_CreateFn();
-                break;
+                server_game = (CServerGameDLL *)it->m_CreateFn();
+            }
+
+            if (player_info_manager == nullptr && utl::sv_contains(it->m_pName, "PlayerInfoManager"))
+            {
+                player_info_manager = (CPlayerInfoManager *)it->m_CreateFn();
             }
         }
 
-        if (servergame == nullptr)
+        if (server_game == nullptr)
         {
             utl::print_error("Failed to find `ServerGameDLL` interface.");
+            return false;
+        }
+
+        if (player_info_manager == nullptr)
+        {
+            utl::print_error("Failed to find `PlayerInfoManager` interface.");
+            return false;
+        }
+
+        auto *globals = player_info_manager->GetGlobalVars();
+        if (globals == nullptr)
+        {
+            utl::print_error("Failed to find `CGlobalVars`.");
+            return false;
+        }
+
+        u8 *engine_module = os_get_module((u8 *)globals);
+        if (engine_module == nullptr)
+        {
+            utl::print_error("Failed to get engine module.");
             return false;
         }
 
         utl::print_info("Applying hooks...");
 
         // TODO: There's a chance that this virtual function might not always be index 10. Will need testing.
-        u8 *fn = utl::get_virtual(servergame, 10);
+        u8 *fn = utl::get_virtual(server_game, 10);
 
         // TODO: Switch to global VMT hooks when it's available.
         auto hook_result = safetyhook::InlineHook::create(fn, Hooked_CServerGameDLL::hooked_GetTickInterval);
