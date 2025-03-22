@@ -97,10 +97,8 @@
     // Clean up entries.
     for (auto &&it = split.begin(); it != split.end();)
     {
-        // Trim any whitespace.
         utl::trim(*it);
 
-        // If it's totally empty then remove it.
         if (it->empty())
         {
             it = split.erase(it);

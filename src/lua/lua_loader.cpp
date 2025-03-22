@@ -55,7 +55,7 @@ void LuaScriptLoader::delete_state(lua_State *state) noexcept
 {
     std::scoped_lock _{m_lua_mutex};
 
-    // Don't allow deletion of main state.
+    // Don't allow deletion of main state since it's managed by us.
     if (state == m_main_state->lua().lua_state())
     {
         return;
@@ -89,7 +89,7 @@ void LuaScriptLoader::reset_scripts() noexcept
 
     // Run autorun scripts.
     std::error_code ec;
-    for (std::filesystem::directory_iterator it{m_autorun_dir, ec}, empty; it != empty && ec == std::error_code{}; it.increment(ec))
+    for (std::filesystem::directory_iterator it{m_autorun_dir, ec}, end; it != end && ec == std::error_code{}; it.increment(ec))
     {
         if (!it->is_regular_file(ec))
         {
@@ -102,18 +102,18 @@ void LuaScriptLoader::reset_scripts() noexcept
             continue;
         }
 
-        utl::print_info("[LuaScriptLoader] Running autorun script: `{}`.\n", path.filename().string());
+        utl::print_info("[LuaScriptLoader] Running autorun script: `{}`.", path.filename().string());
 
         // TODO: Save script paths.
 
         auto run_result = m_main_state->run_script_file(path);
         if (run_result)
         {
-            utl::print_info("[LuaScriptLoader] Ran autorun script: `{}`.\n", path.filename().string());
+            utl::print_info("[LuaScriptLoader] Ran autorun script: `{}`.", path.filename().string());
         }
         else
         {
-            utl::print_error("[LuaScriptLoader] Failed to load autorun script: `{}`.\n{}\n", path.filename().string(), run_result.error());
+            utl::print_error("[LuaScriptLoader] Failed to load autorun script: `{}`.\n{}", path.filename().string(), run_result.error());
         }
     }
 }

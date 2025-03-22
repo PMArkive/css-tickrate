@@ -8,22 +8,21 @@ void lua_panic_handler(sol::optional<std::string> maybe_msg) noexcept
 {
     if (maybe_msg)
     {
-        utl::print_error("Lua panic occurred:\n{}\n", *maybe_msg);
+        utl::print_error("Lua panic occurred:\n{}", *maybe_msg);
     }
 
     // When this function exits, Lua will exhibit default behavior and abort().
 }
 
-i32 lua_exception_handler(
-    lua_State *state, [[maybe_unused]] sol::optional<const std::exception &> maybe_exception, sol::string_view description) noexcept
+i32 lua_exception_handler(lua_State *L, [[maybe_unused]] sol::optional<const std::exception &> maybe_exception, sol::string_view description) noexcept
 {
     // state is the lua state, which you can wrap in a state_view if necessary maybe_exception will contain exception, if it exists description will
     // either be the what() of the exception or a description saying that we hit the general-case catch(...).
-    utl::print_error("Lua exception occurred:\n{}\n", description);
+    utl::print_error("Lua exception occurred:\n{}", description);
 
     // you must push 1 element onto the stack to be transported through as the error object in Lua note that Lua -- and 99.5% of all Lua users and
     // libraries -- expects a string so we push a single string (in our case, the description of the error).
-    return sol::stack::push(state, description);
+    return sol::stack::push(L, description);
 }
 
 LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is_main_state}
@@ -60,39 +59,54 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
 
     auto tr = m_lua.create_table();
 
-    tr["gamedata"] = &g_game_data;
-
-    tr["print_info"] = [](sol::this_state state, const sol::object &value) noexcept
+    tr["print_info"] = [](sol::this_state L, sol::stack_object value) noexcept
     {
+        std::string file_name = [L]() noexcept -> std::string
+        {
+            // 0 = this func
+            // 1 = lua func
+            lua_Debug info;
+            if (lua_getstack(L, 1, &info) != 1)
+            {
+                return "?";
+            }
+
+            if (lua_getinfo(L, "S", &info) == 0 || info.source == nullptr)
+            {
+                return "?";
+            }
+
+            std::string_view source = info.source;
+            if (source.front() != '@')
+            {
+                return "?";
+            }
+
+            return std::filesystem::path{source.substr(1)}.filename().string();
+        }();
+
         if (value.is<std::string_view>())
         {
-            utl::print_info("[Lua] {}\n", value.as<std::string_view>());
+            utl::print_info("[Lua `{}`] {}", file_name, value.as<std::string_view>());
         }
         else
         {
-            auto *str = luaL_tolstring(state, -1, nullptr);
+            auto *str = luaL_tolstring(L, value.stack_index(), nullptr);
 
-            utl::print_info("[Lua] {}\n", str);
+            utl::print_info("[Lua `{}`] {}", file_name, str);
 
-            lua_pop(state, 1);
+            // `luaL_tolstring` will push onto the stack.
+            lua_pop(L, 1);
         }
     };
 
     // tr["print_error"] = [](const sol::object &value) noexcept
     // {
-    //     if (value.is<std::string_view>())
-    //     {
-    //     }
     // };
 
     m_lua["print"] = tr["print_info"];
 
-    tr["print_error"] = [](f64 x) noexcept
-    {
-        return x * x;
-    };
-
-    tr["add_callback"] = [this](const std::string &name, const sol::object &fn) noexcept
+    tr["add_callback"] = [this](const std::string &name, sol::stack_object fn) noexcept
     {
         std::scoped_lock _{m_exec_mutex};
 
@@ -120,7 +134,8 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         return true;
     };
 
-    m_lua.new_usertype<GameData>("GameData", "new", sol::no_constructor, "get_mod_name", [](GameData &self) noexcept { return self.mod_name; });
+    tr["gamedata"] = &g_game_data;
+    tr.new_usertype<GameData>("GameData", "new", sol::no_constructor, "get_mod_name", [](GameData &self) noexcept { return self.mod_name; });
 
     m_lua["tr"] = tr;
 }
@@ -146,8 +161,8 @@ tl::expected<void, std::string> LuaScriptState::run_script_file(const std::files
     std::scoped_lock _{m_exec_mutex};
 
     // Only allow requiring from the directory the script was run from.
-    auto &&old_path  = m_lua["package"]["path"];
-    auto &&old_cpath = m_lua["package"]["cpath"];
+    auto old_path  = m_lua["package"]["path"];
+    auto old_cpath = m_lua["package"]["cpath"];
 
     auto dir = full_path.parent_path().string();
 
@@ -164,7 +179,7 @@ tl::expected<void, std::string> LuaScriptState::run_script_file(const std::files
     m_lua["package"]["path"]  = new_path;
     m_lua["package"]["cpath"] = new_cpath;
 
-    auto result = m_lua.safe_script_file(full_path.string(), &sol::script_pass_on_error);
+    auto result = m_lua.safe_script_file(full_path.string(), sol::script_pass_on_error);
 
     m_lua["package"]["path"]  = old_path;
     m_lua["package"]["cpath"] = old_cpath;
@@ -187,7 +202,7 @@ void LuaScriptState::on_script_reset() noexcept
         if (auto result = cb(); !result.valid())
         {
             sol::error err = result;
-            utl::print_error("[LuaScriptState] on_script_reset error: {}\n", err.what());
+            utl::print_error("[LuaScriptState] `on_script_reset` error: {}", err.what());
         }
     }
 }
@@ -201,7 +216,7 @@ void LuaScriptState::on_load() noexcept
         if (auto result = cb(); !result.valid())
         {
             sol::error err = result;
-            utl::print_error("[LuaScriptState] on_load error: {}\n", err.what());
+            utl::print_error("[LuaScriptState] `on_load` error: {}", err.what());
         }
     }
 }
@@ -215,7 +230,7 @@ void LuaScriptState::on_level_init(std::string_view map_name) noexcept
         if (auto result = cb(map_name); !result.valid())
         {
             sol::error err = result;
-            utl::print_error("[LuaScriptState] on_level_init error: {}\n", err.what());
+            utl::print_error("[LuaScriptState] `on_level_init` error: {}", err.what());
         }
     }
 }
@@ -229,7 +244,7 @@ void LuaScriptState::on_level_shutdown() noexcept
         if (auto result = cb(); !result.valid())
         {
             sol::error err = result;
-            utl::print_error("[LuaScriptState] on_level_shutdown error: {}\n", err.what());
+            utl::print_error("[LuaScriptState] `on_level_shutdown` error: {}", err.what());
         }
     }
 }
@@ -243,7 +258,7 @@ void LuaScriptState::on_game_frame(bool simulating) noexcept
         if (auto result = cb(simulating); !result.valid())
         {
             sol::error err = result;
-            utl::print_error("[LuaScriptState] on_game_frame error: {}\n", err.what());
+            utl::print_error("[LuaScriptState] `on_game_frame` error: {}", err.what());
         }
     }
 

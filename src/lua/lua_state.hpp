@@ -5,8 +5,10 @@
 #include <sol/sol.hpp>
 #include <mutex>
 #include <optional>
-#include <string>
+#include <vector>
 #include <unordered_map>
+#include <string>
+#include <string_view>
 #include <filesystem>
 
 class LuaScriptState

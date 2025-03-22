@@ -118,20 +118,20 @@ public:
 
     bool Load(CreateInterfaceFn interface_factory, CreateInterfaceFn gameserver_factory) noexcept override
     {
-        utl::print_info("Loading...\n");
+        utl::print_info("Loading...");
 
         // Find our own module.
         u8 *our_module = os_get_module((u8 *)find_me);
         if (our_module == nullptr)
         {
-            utl::print_error("Failed to get our own module.\n");
+            utl::print_error("Failed to get our own module.");
             return false;
         }
 
         auto our_module_full_path = os_get_module_full_path(our_module);
         if (our_module_full_path.empty())
         {
-            utl::print_error("Failed to get our own module's full path.\n");
+            utl::print_error("Failed to get our own module's full path.");
             return false;
         }
 
@@ -147,7 +147,7 @@ public:
             std::error_code ec;
             if (std::filesystem::create_directories(autorun_dir, ec); ec != std::error_code{})
             {
-                utl::print_error("Failed to create autorun directory.\n");
+                utl::print_error("Failed to create autorun directory.");
                 return false;
             }
         }
@@ -156,14 +156,14 @@ public:
         u8 *server_module          = os_get_module(server_createinterface);
         if (server_module == nullptr)
         {
-            utl::print_error("Failed to get server module.\n");
+            utl::print_error("Failed to get server module.");
             return false;
         }
 
         auto cmdline = os_get_split_command_line();
         if (cmdline.empty())
         {
-            utl::print_error("Failed to get command line.\n");
+            utl::print_error("Failed to get command line.");
             return false;
         }
 
@@ -190,20 +190,20 @@ public:
             mod_value = "hl2";
         }
 
-        utl::print_info("mod = {}\n", mod_value);
+        utl::print_info("mod = {}", mod_value);
 
         g_game_data.mod_name = mod_value;
 
         if (tickrate_value.empty())
         {
-            utl::print_error("Bad tickrate: Failed to find `-tickrate` command line string.\n");
+            utl::print_error("Bad tickrate: Failed to find `-tickrate` command line string.");
             return false;
         }
 
         auto [ptr, ec] = std::from_chars(tickrate_value.data(), tickrate_value.data() + tickrate_value.size(), g_desired_tickrate);
         if (ec != std::errc{})
         {
-            utl::print_error("Bad tickrate: Failed to convert `-tickrate` command line value.\n");
+            utl::print_error("Bad tickrate: Failed to convert `-tickrate` command line value.");
             return false;
         }
 
@@ -214,8 +214,8 @@ public:
         if (g_desired_tickrate < min_tickrate)
         {
             utl::print_error(
-                "Bad tickrate: `-tickrate` command line value is too low (Desired tickrate is {}, minimum is {}). Server will continue with "
-                "default tickrate.\n",
+                "Bad tickrate: `-tickrate` command line value is too low (Desired tickrate is {}, minimum is {}). Server will continue with default "
+                "tickrate.",
                 g_desired_tickrate,
                 min_tickrate);
             return false;
@@ -223,14 +223,14 @@ public:
         else if (g_desired_tickrate > max_tickrate)
         {
             utl::print_error(
-                "Bad tickrate: `-tickrate` command line value is too high (Desired tickrate is {}, maximum is {}). Server will continue with "
-                "default tickrate.\n",
+                "Bad tickrate: `-tickrate` command line value is too high (Desired tickrate is {}, maximum is {}). Server will continue with default "
+                "tickrate.",
                 g_desired_tickrate,
                 max_tickrate);
             return false;
         }
 
-        utl::print_info("Desired tickrate is {}.\n", g_desired_tickrate);
+        utl::print_info("Desired tickrate is {}.", g_desired_tickrate);
 
         InterfaceReg *regs;
 
@@ -248,7 +248,7 @@ public:
                 auto thunk_disasm_result = utl::disasm(server_createinterface);
                 if (!thunk_disasm_result)
                 {
-                    utl::print_error("Failed to decode first instruction in `CreateInterface`: {}\n", thunk_disasm_result.error().status_str());
+                    utl::print_error("Failed to decode first instruction in `CreateInterface`: {}", thunk_disasm_result.error().status_str());
                     return false;
                 }
 
@@ -278,7 +278,7 @@ public:
                 });
             if (!regs_disasm_result)
             {
-                utl::print_error("Failed to find instruction containing `s_pInterfaceRegs`: {}\n", regs_disasm_result.error().status_str());
+                utl::print_error("Failed to find instruction containing `s_pInterfaceRegs`: {}", regs_disasm_result.error().status_str());
                 return false;
             }
 
@@ -294,7 +294,7 @@ public:
 
         if (regs == nullptr)
         {
-            utl::print_error("Failed to find `s_pInterfaceRegs` (null).\n");
+            utl::print_error("Failed to find `s_pInterfaceRegs` (null).");
             return false;
         }
 
@@ -317,11 +317,11 @@ public:
 
         if (servergame == nullptr)
         {
-            utl::print_error("Failed to find `ServerGameDLL` interface.\n");
+            utl::print_error("Failed to find `ServerGameDLL` interface.");
             return false;
         }
 
-        utl::print_info("Applying hooks...\n");
+        utl::print_info("Applying hooks...");
 
         // TODO: There's a chance that this virtual function might not always be index 10. Will need testing.
         u8 *fn = utl::get_virtual(servergame, 10);
@@ -332,7 +332,7 @@ public:
         {
             auto &&err = hook_result.error();
             utl::print_error(
-                "Failed to hook `CServerGameDLL::GetTickInterval` function: {} @ 0x{:X}\n", utl::safetyhookinline_error_str(err), (usize)err.ip);
+                "Failed to hook `CServerGameDLL::GetTickInterval` function: {} @ 0x{:X}", utl::safetyhookinline_error_str(err), (usize)err.ip);
 
             return false;
         }
@@ -342,13 +342,13 @@ public:
         // Set up Lua.
         if (!g_lua_loader.init(autorun_dir))
         {
-            utl::print_error("Failed to initialize Lua loader.\n");
+            utl::print_error("Failed to initialize Lua loader.");
             return false;
         }
 
         g_lua_loader.on_load();
 
-        utl::print_info("Loaded!\n");
+        utl::print_info("Loaded!");
 
         return true;
     }
@@ -357,7 +357,7 @@ public:
     {
         g_GetTickInterval_hook = {};
 
-        utl::print_info("Unloaded.\n");
+        utl::print_info("Unloaded.");
     }
 
     void Pause() noexcept override {}

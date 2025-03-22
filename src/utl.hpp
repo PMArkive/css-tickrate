@@ -58,7 +58,7 @@ namespace utl
     template <class... Args>
     void print_info(fmt::format_string<Args...> fmt, Args &&...args) noexcept
     {
-        std::fprintf(stdout, "[Tickrate] [info] %s", fmt::format(fmt, std::forward<Args>(args)...).c_str());
+        std::fprintf(stdout, "[Tickrate] [info] %s\n", fmt::format(fmt, std::forward<Args>(args)...).c_str());
         std::fflush(stdout);
     }
 
@@ -66,7 +66,7 @@ namespace utl
     template <class... Args>
     void print_error(fmt::format_string<Args...> fmt, Args &&...args) noexcept
     {
-        std::fprintf(stderr, "[Tickrate] [error] %s", fmt::format(fmt, std::forward<Args>(args)...).c_str());
+        std::fprintf(stderr, "[Tickrate] [error] %s\n", fmt::format(fmt, std::forward<Args>(args)...).c_str());
         std::fflush(stderr);
     }
 
