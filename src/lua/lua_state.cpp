@@ -1,7 +1,8 @@
 #include "lua_state.hpp"
 #include "common.hpp"
 #include "utl.hpp"
-#include "game_data.hpp"
+#include <cstring>
+#include <utility>
 #include <algorithm>
 
 void lua_panic_handler(sol::optional<std::string> maybe_msg) noexcept
@@ -23,6 +24,42 @@ i32 lua_exception_handler(lua_State *L, [[maybe_unused]] sol::optional<const std
     // you must push 1 element onto the stack to be transported through as the error object in Lua note that Lua -- and 99.5% of all Lua users and
     // libraries -- expects a string so we push a single string (in our case, the description of the error).
     return sol::stack::push(L, description);
+}
+
+std::string get_lua_file_name(lua_State *L) noexcept
+{
+    // 0 = this func
+    // 1 = lua func
+    lua_Debug info;
+    if (lua_getstack(L, 1, &info) != 1)
+    {
+        return "?";
+    }
+
+    if (lua_getinfo(L, "S", &info) == 0 || info.source == nullptr)
+    {
+        return "?";
+    }
+
+    std::string_view source = info.source;
+    if (source.front() != '@')
+    {
+        return "?";
+    }
+
+    return std::filesystem::path{source.substr(1)}.filename().string();
+}
+
+template <class... Args>
+void lua_print_info(lua_State *L, fmt::format_string<Args...> fmt, Args &&...args) noexcept
+{
+    utl::print_info("[Lua `{}`] {}", get_lua_file_name(L), fmt::format(fmt, std::forward<Args>(args)...));
+}
+
+template <class... Args>
+void lua_print_error(lua_State *L, fmt::format_string<Args...> fmt, Args &&...args) noexcept
+{
+    utl::print_error("[Lua `{}`] {}", get_lua_file_name(L), fmt::format(fmt, std::forward<Args>(args)...));
 }
 
 LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is_main_state}
@@ -61,52 +98,41 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
 
     tr["print_info"] = [](sol::this_state L, sol::stack_object value) noexcept
     {
-        std::string file_name = [L]() noexcept -> std::string
-        {
-            // 0 = this func
-            // 1 = lua func
-            lua_Debug info;
-            if (lua_getstack(L, 1, &info) != 1)
-            {
-                return "?";
-            }
-
-            if (lua_getinfo(L, "S", &info) == 0 || info.source == nullptr)
-            {
-                return "?";
-            }
-
-            std::string_view source = info.source;
-            if (source.front() != '@')
-            {
-                return "?";
-            }
-
-            return std::filesystem::path{source.substr(1)}.filename().string();
-        }();
-
         if (value.is<std::string_view>())
         {
-            utl::print_info("[Lua `{}`] {}", file_name, value.as<std::string_view>());
+            lua_print_info(L, "{}", value.as<std::string_view>());
         }
         else
         {
             auto *str = luaL_tolstring(L, value.stack_index(), nullptr);
 
-            utl::print_info("[Lua `{}`] {}", file_name, str);
+            lua_print_info(L, "{}", str);
 
             // `luaL_tolstring` will push onto the stack.
             lua_pop(L, 1);
         }
     };
 
-    // tr["print_error"] = [](const sol::object &value) noexcept
-    // {
-    // };
+    tr["print_error"] = [](sol::this_state L, sol::stack_object value) noexcept
+    {
+        if (value.is<std::string_view>())
+        {
+            lua_print_error(L, "{}", value.as<std::string_view>());
+        }
+        else
+        {
+            auto *str = luaL_tolstring(L, value.stack_index(), nullptr);
+
+            lua_print_error(L, "{}", str);
+
+            // `luaL_tolstring` will push onto the stack.
+            lua_pop(L, 1);
+        }
+    };
 
     m_lua["print"] = tr["print_info"];
 
-    tr["add_callback"] = [this](const std::string &name, sol::stack_object fn) noexcept
+    tr["add_callback"] = [this](sol::this_state L, const std::string &name, sol::stack_object fn) noexcept
     {
         std::scoped_lock _{m_exec_mutex};
 
@@ -118,6 +144,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         auto found_id = str_to_callback_id(name);
         if (!found_id)
         {
+            lua_print_error(L, "Tried adding a callback that doesn't exist: `{}`.", name);
             return false;
         }
 
@@ -134,8 +161,16 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         return true;
     };
 
-    tr["gamedata"] = &g_game_data;
-    tr.new_usertype<GameData>("GameData", "new", sol::no_constructor, "get_mod_name", [](GameData &self) noexcept { return self.mod_name; });
+    tr.new_usertype<edict_t>(
+        "edict",
+        sol::meta_function::construct,
+        sol::no_constructor,
+        "get_index",
+        [](edict_t *edict) noexcept { return g_game.engine->IndexOfEdict(edict); });
+
+    tr["game"] = &g_game;
+    tr.new_usertype<Game>(
+        "Game", sol::meta_function::construct, sol::no_constructor, "get_mod_name", [](Game &self) noexcept { return self.mod_name; });
 
     m_lua["tr"] = tr;
 }
@@ -263,4 +298,64 @@ void LuaScriptState::on_game_frame(bool simulating) noexcept
     }
 
     // TODO: Handle garbage collection if needed.
+}
+
+PLUGIN_RESULT
+LuaScriptState::on_client_connect(
+    bool *allow_connect, edict_t *edict, std::string_view name, std::string_view address, char *reject, i32 max_reject_len) noexcept
+{
+    std::scoped_lock _{m_exec_mutex};
+
+    for (auto &&cb : m_callbacks[CallbackID::on_client_connect])
+    {
+        if (auto result = cb(edict, name, address); !result.valid())
+        {
+            sol::error err = result;
+            utl::print_error("[LuaScriptState] `on_game_frame` error: {}", err.what());
+        }
+        else
+        {
+            bool allow         = false;
+            auto deny_result   = result[0];
+            auto reason_result = result[1];
+
+            if (deny_result.is<bool>())
+            {
+                allow = deny_result.get<bool>();
+            }
+
+            if (allow_connect != nullptr)
+            {
+                *allow_connect = allow;
+            }
+
+            if (!allow)
+            {
+                std::string reason{};
+                if (reason_result.is<std::string>())
+                {
+                    reason = reason_result.get<std::string>();
+                }
+
+                if (!reason.empty())
+                {
+                    if (reason.size() < (usize)(max_reject_len - 1))
+                    {
+                        std::memcpy(reject, reason.data(), reason.size());
+                        reject[reason.size()] = '\0';
+                    }
+                    else
+                    {
+                        reason = reason.substr(0, max_reject_len - 4) + "...";
+                        std::memcpy(reject, reason.data(), reason.size());
+                        reject[reason.size()] = '\0';
+                    }
+                }
+
+                return PLUGIN_STOP;
+            }
+        }
+    }
+
+    return PLUGIN_CONTINUE;
 }

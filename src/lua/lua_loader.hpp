@@ -2,6 +2,7 @@
 
 #include "type.hpp"
 #include "lua_state.hpp"
+#include "game.hpp"
 #include <memory>
 #include <atomic>
 #include <mutex>
@@ -40,10 +41,12 @@ public:
     }
 
     // Callbacks.
-    void on_load() noexcept;
-    void on_level_init(std::string_view map_name) noexcept;
-    void on_level_shutdown() noexcept;
-    void on_game_frame(bool simulating) noexcept;
+    void          on_load() noexcept;
+    void          on_level_init(std::string_view map_name) noexcept;
+    void          on_level_shutdown() noexcept;
+    void          on_game_frame(bool simulating) noexcept;
+    PLUGIN_RESULT on_client_connect(
+        bool *allow_connect, edict_t *edict, std::string_view name, std::string_view address, char *reject, i32 max_reject_len) noexcept;
 
 private:
     std::filesystem::path                        m_autorun_dir{};

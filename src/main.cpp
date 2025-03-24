@@ -2,120 +2,104 @@
 #include "type.hpp"
 #include "utl.hpp"
 #include "os.hpp"
-#include "game_data.hpp"
+#include "game.hpp"
 #include "lua/lua_loader.hpp"
+#include <tl/expected.hpp>
+#include <fmt/format.h>
 #include <safetyhook/safetyhook.hpp>
+#include <cctype>
+#include <string>
 #include <string_view>
+#include <functional>
+#include <unordered_map>
+#include <map>
 #include <charconv>
 #include <filesystem>
-
-// Engine stuff.
-using CreateInterfaceFn      = void *(TR_CCALL *)(cstr name, i32 *return_code);
-using InstantiateInterfaceFn = void *(TR_CCALL *)();
-
-struct edict_t;
-class KeyValues;
-class CCommand;
-
-using QueryCvarCookie_t = i32;
-
-constexpr f32 MINIMUM_TICK_INTERVAL = 0.001f;
-constexpr f32 MAXIMUM_TICK_INTERVAL = 0.1f;
-
-enum : i32
-{
-    IFACE_OK = 0,
-    IFACE_FAILED,
-};
-
-enum PLUGIN_RESULT : i32
-{
-    PLUGIN_CONTINUE = 0,
-    PLUGIN_OVERRIDE,
-    PLUGIN_STOP,
-};
-
-enum EQueryCvarValueStatus : i32
-{
-    eQueryCvarValueStatus_ValueIntact = 0,
-    eQueryCvarValueStatus_CvarNotFound,
-    eQueryCvarValueStatus_NotACvar,
-    eQueryCvarValueStatus_CvarProtected,
-};
-
-class InterfaceReg
-{
-public:
-    InstantiateInterfaceFn m_CreateFn;
-    cstr                   m_pName;
-    InterfaceReg          *m_pNext;
-};
-
-class CGlobalVars
-{
-public:
-};
-
-class CServerGameDLL
-{
-public:
-};
-
-class IVEngineServer
-{
-public:
-};
-
-class CPlayerInfoManager
-{
-public:
-    // virtual IPlayerInfo *GetPlayerInfo( edict_t *pEdict );
-
-    [[nodiscard]] CGlobalVars *GetGlobalVars() const noexcept
-    {
-        return utl::get_virtual<CGlobalVars *(TR_THISCALL *)(decltype(this))>(this, 1)(this);
-    }
-};
-
-// ISERVERPLUGINCALLBACKS003
-class IServerPluginCallbacks
-{
-public:
-    virtual bool          Load(CreateInterfaceFn interface_factory, CreateInterfaceFn gameserver_factory)                               = 0;
-    virtual void          Unload()                                                                                                      = 0;
-    virtual void          Pause()                                                                                                       = 0;
-    virtual void          UnPause()                                                                                                     = 0;
-    virtual cstr          GetPluginDescription()                                                                                        = 0;
-    virtual void          LevelInit(cstr map_name)                                                                                      = 0;
-    virtual void          ServerActivate(edict_t *edict_list, i32 edict_count, i32 client_max)                                          = 0;
-    virtual void          GameFrame(bool simulating)                                                                                    = 0;
-    virtual void          LevelShutdown()                                                                                               = 0;
-    virtual void          ClientActive(edict_t *edict)                                                                                  = 0;
-    virtual void          ClientDisconnect(edict_t *edict)                                                                              = 0;
-    virtual void          ClientPutInServer(edict_t *edict, cstr player_name)                                                           = 0;
-    virtual void          SetCommandClient(i32 index)                                                                                   = 0;
-    virtual void          ClientSettingsChanged(edict_t *edict)                                                                         = 0;
-    virtual PLUGIN_RESULT ClientConnect(bool *allow_connect, edict_t *edict, cstr name, cstr address, char *reject, i32 max_reject_len) = 0;
-    virtual PLUGIN_RESULT ClientCommand(edict_t *edict, const CCommand &args)                                                           = 0;
-    virtual PLUGIN_RESULT NetworkIDValidated(cstr username, cstr network_id)                                                            = 0;
-    virtual void
-    OnQueryCvarValueFinished(QueryCvarCookie_t cookie, edict_t *edict, EQueryCvarValueStatus status, cstr cvar_name, cstr cvar_value) = 0;
-    virtual void OnEdictAllocated(edict_t *edict)                                                                                     = 0;
-    virtual void OnEdictFreed(edict_t *edict)                                                                                         = 0;
-};
-
-class IGameEventListener
-{
-public:
-    virtual ~IGameEventListener() noexcept       = default;
-    virtual void FireGameEvent(KeyValues *event) = 0;
-};
 
 // Global variables, etc.
 LuaScriptLoader  g_lua_loader{};
 u16              g_desired_tickrate{};
 SafetyHookInline g_GetTickInterval_hook{};
 
+// Misc utils.
+[[nodiscard]] tl::expected<InterfaceReg *, std::string> find_regs(u8 *module_handle) noexcept
+{
+    // Name used for error printing.
+    auto module_name = os_get_module_full_path(module_handle);
+    if (module_name.empty())
+    {
+        return tl::unexpected{"Invalid module name"};
+    }
+
+    module_name = std::filesystem::path{module_name}.filename().string();
+
+    // Check for the `s_pInterfaceRegs` symbol first.
+    if (u8 *regs_symbol = os_get_procedure(module_handle, "s_pInterfaceRegs"); regs_symbol != nullptr)
+    {
+        return *(InterfaceReg **)regs_symbol;
+    }
+
+    // No symbol was found so we have to disasm manually.
+    u8 *create_interface = os_get_procedure(module_handle, "CreateInterface");
+    if (create_interface == nullptr)
+    {
+        return tl::unexpected{fmt::format("Failed to find `{}!CreateInterface`", module_name)};
+    }
+
+    // First we check for a jump thunk. Some versions of the game have this for some reason. If there isn't one then we don't worry about it.
+    for (;;)
+    {
+        auto thunk_disasm_result = utl::disasm(create_interface);
+        if (!thunk_disasm_result)
+        {
+            return tl::unexpected{
+                fmt::format("Failed to decode first instruction in `{}!CreateInterface`: {}", module_name, thunk_disasm_result.error().status_str())};
+        }
+
+        auto &thunk_disasm = *thunk_disasm_result;
+        if (thunk_disasm.ix.mnemonic != ZYDIS_MNEMONIC_JMP)
+        {
+            break;
+        }
+
+        create_interface += thunk_disasm.ix.length + (i32)thunk_disasm.operands[0].imm.value.s;
+    }
+
+    // Find the first `mov reg, mem`.
+    auto regs_disasm_result = utl::disasm_for_each(
+        create_interface,
+        ZYDIS_MAX_INSTRUCTION_LENGTH * 25, // I hope this is enough :P
+        [](auto &result) noexcept
+        {
+            // x86-64 is RIP-relative. x86-32 is absolute.
+            constexpr ZyanU16 op_size  = TR_ARCH_X86_64 == 1 ? 64 : 32;
+            constexpr auto    mem_base = TR_ARCH_X86_64 == 1 ? ZYDIS_REGISTER_RIP : ZYDIS_REGISTER_NONE;
+
+            return result.ix.mnemonic == ZYDIS_MNEMONIC_MOV && result.ix.operand_count_visible == 2
+                && result.operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER && result.operands[0].size == op_size
+                && result.operands[1].type == ZYDIS_OPERAND_TYPE_MEMORY && result.operands[1].size == op_size
+                && result.operands[1].mem.segment == ZYDIS_REGISTER_DS && result.operands[1].mem.base == mem_base;
+        });
+    if (!regs_disasm_result)
+    {
+        return tl::unexpected{
+            fmt::format("Failed to find instruction containing `{}!s_pInterfaceRegs`: {}", module_name, regs_disasm_result.error().status_str())};
+    }
+
+    auto &regs_disasm = *regs_disasm_result;
+
+    // x86-64 is RIP-relative. x86-32 is absolute.
+#if TR_ARCH_X86_64
+    return *(InterfaceReg **)(regs_disasm.ip + regs_disasm.ix.length + (i32)regs_disasm.operands[1].mem.disp.value);
+#else
+    return *(InterfaceReg **)((usize)regs_disasm.operands[1].mem.disp.value);
+#endif
+}
+
+// Dummy function so we can find our own module.
+void find_me() noexcept {}
+
+// Hooks.
 class Hooked_CServerGameDLL : public CServerGameDLL
 {
 public:
@@ -127,9 +111,7 @@ public:
     }
 };
 
-// Dummy function so we can find our own module.
-void find_me() noexcept {}
-
+// Plugin.
 class TickratePlugin final : public IServerPluginCallbacks,
                              public IGameEventListener
 {
@@ -173,8 +155,7 @@ public:
             }
         }
 
-        u8 *server_createinterface = (u8 *)gameserver_factory;
-        u8 *server_module          = os_get_module(server_createinterface);
+        u8 *server_module = os_get_module((u8 *)gameserver_factory);
         if (server_module == nullptr)
         {
             utl::print_error("Failed to get server module.");
@@ -212,8 +193,6 @@ public:
         }
 
         utl::print_info("mod = {}", mod_value);
-
-        g_game_data.mod_name = mod_value;
 
         if (tickrate_value.empty())
         {
@@ -253,101 +232,52 @@ public:
 
         utl::print_info("Desired tickrate is {}.", g_desired_tickrate);
 
-        // TOOD: Make this a func to return regs for a module.
-        InterfaceReg *regs;
-
-        // Check for the `s_pInterfaceRegs` symbol first.
-        if (u8 *regs_symbol = os_get_procedure(server_module, "s_pInterfaceRegs"); regs_symbol != nullptr)
+        // Find interfaces in the server module.
+        auto server_regs_result = find_regs(server_module);
+        if (!server_regs_result)
         {
-            regs = *(InterfaceReg **)regs_symbol;
-        }
-        else
-        {
-            // No symbol was found so we have to disasm manually.
-            // First we check for a jump thunk. Some versions of the game have this for some reason. If there isn't one then we don't worry about it.
-            for (;;)
-            {
-                auto thunk_disasm_result = utl::disasm(server_createinterface);
-                if (!thunk_disasm_result)
-                {
-                    utl::print_error("Failed to decode first instruction in `CreateInterface`: {}", thunk_disasm_result.error().status_str());
-                    return false;
-                }
-
-                auto &thunk_disasm = *thunk_disasm_result;
-                if (thunk_disasm.ix.mnemonic != ZYDIS_MNEMONIC_JMP)
-                {
-                    break;
-                }
-
-                server_createinterface += thunk_disasm.ix.length + (i32)thunk_disasm.operands[0].imm.value.s;
-            }
-
-            // Find the first `mov reg, mem`.
-            auto regs_disasm_result = utl::disasm_for_each(
-                server_createinterface,
-                ZYDIS_MAX_INSTRUCTION_LENGTH * 25, // I hope this is enough :P
-                [](auto &result) noexcept
-                {
-                    // x86-64 is RIP-relative. x86-32 is absolute.
-                    constexpr ZyanU16 op_size  = TR_ARCH_X86_64 == 1 ? 64 : 32;
-                    constexpr auto    mem_base = TR_ARCH_X86_64 == 1 ? ZYDIS_REGISTER_RIP : ZYDIS_REGISTER_NONE;
-
-                    return result.ix.mnemonic == ZYDIS_MNEMONIC_MOV && result.ix.operand_count_visible == 2
-                        && result.operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER && result.operands[0].size == op_size
-                        && result.operands[1].type == ZYDIS_OPERAND_TYPE_MEMORY && result.operands[1].size == op_size
-                        && result.operands[1].mem.segment == ZYDIS_REGISTER_DS && result.operands[1].mem.base == mem_base;
-                });
-            if (!regs_disasm_result)
-            {
-                utl::print_error("Failed to find instruction containing `s_pInterfaceRegs`: {}", regs_disasm_result.error().status_str());
-                return false;
-            }
-
-            auto &regs_disasm = *regs_disasm_result;
-
-            // x86-64 is RIP-relative. x86-32 is absolute.
-#if TR_ARCH_X86_64
-            regs = *(InterfaceReg **)(regs_disasm.ip + regs_disasm.ix.length + (i32)regs_disasm.operands[1].mem.disp.value);
-#else
-            regs = *(InterfaceReg **)((usize)regs_disasm.operands[1].mem.disp.value);
-#endif
-        }
-
-        if (regs == nullptr)
-        {
-            utl::print_error("Failed to find `s_pInterfaceRegs` (null).");
+            utl::print_error("Server regs error: {}.", server_regs_result.error());
             return false;
         }
 
-        // TODO: If this becomes an issue, we can just search for latest version... but for now, only the latest should be exist.
-        CServerGameDLL     *server_game{};
-        CPlayerInfoManager *player_info_manager{};
-
-        for (auto *it = regs; it != nullptr; it = it->m_pNext)
+        auto find_interface = [](InterfaceReg *start, std::string_view name) noexcept -> u8 *
         {
-            if (it->m_pName == nullptr)
+            static std::unordered_map<InterfaceReg *, std::map<std::string, u8 *, std::greater<>>> cache{};
+
+            if (cache.find(start) == cache.end())
             {
-                continue;
+                for (auto *it = start; it != nullptr; it = it->m_pNext)
+                {
+                    cache[start][it->m_pName] = (u8 *)it->m_CreateFn();
+                }
             }
 
-            if (server_game == nullptr && utl::sv_contains(it->m_pName, "ServerGameDLL"))
+            for (auto &&[base_regs, interfaces] : cache)
             {
-                server_game = (CServerGameDLL *)it->m_CreateFn();
+                for (auto &&[interface_name, interface_ptr] : interfaces)
+                {
+                    // Get rid of trailing numbers.
+                    std::string cur_name = interface_name;
+                    utl::rtrim(cur_name, [](u8 ch) noexcept { return std::isdigit(ch) == 0; });
+
+                    if (cur_name == name)
+                    {
+                        return interface_ptr;
+                    }
+                }
             }
 
-            if (player_info_manager == nullptr && utl::sv_contains(it->m_pName, "PlayerInfoManager"))
-            {
-                player_info_manager = (CPlayerInfoManager *)it->m_CreateFn();
-            }
-        }
+            return nullptr;
+        };
 
+        auto *server_game = (CServerGameDLL *)find_interface(*server_regs_result, "ServerGameDLL");
         if (server_game == nullptr)
         {
             utl::print_error("Failed to find `ServerGameDLL` interface.");
             return false;
         }
 
+        auto *player_info_manager = (CPlayerInfoManager *)find_interface(*server_regs_result, "PlayerInfoManager");
         if (player_info_manager == nullptr)
         {
             utl::print_error("Failed to find `PlayerInfoManager` interface.");
@@ -367,6 +297,23 @@ public:
             utl::print_error("Failed to get engine module.");
             return false;
         }
+
+        auto engine_regs_result = find_regs(engine_module);
+        if (!engine_regs_result)
+        {
+            utl::print_error("Engine regs error: {}.", engine_regs_result.error());
+            return false;
+        }
+
+        auto *engine = (CVEngineServer *)find_interface(*engine_regs_result, "VEngineServer");
+        if (engine == nullptr)
+        {
+            utl::print_error("Failed to find `VEngineServer` interface.");
+            return false;
+        }
+
+        g_game.mod_name = mod_value;
+        g_game.engine   = engine;
 
         utl::print_info("Applying hooks...");
 
@@ -446,7 +393,9 @@ public:
     PLUGIN_RESULT
     ClientConnect(bool *allow_connect, edict_t *edict, cstr name, cstr address, char *reject, i32 max_reject_len) noexcept override
     {
-        return PLUGIN_CONTINUE;
+        auto lua_result = g_lua_loader.on_client_connect(allow_connect, edict, name, address, reject, max_reject_len);
+
+        return lua_result;
     }
 
     PLUGIN_RESULT ClientCommand(edict_t *edict, const CCommand &args) noexcept override

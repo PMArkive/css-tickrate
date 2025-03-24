@@ -70,6 +70,28 @@ namespace utl
         std::fflush(stderr);
     }
 
+    // Trim from the left side of the string using a predicate.
+    template <class Pred>
+    void ltrim(std::string &str, Pred &&pred) noexcept
+    {
+        str.erase(str.begin(), std::find_if(str.begin(), str.end(), pred));
+    }
+
+    // Trim from the right side of the string using a predicate.
+    template <class Pred>
+    void rtrim(std::string &str, Pred &&pred) noexcept
+    {
+        str.erase(std::find_if(str.rbegin(), str.rend(), pred).base(), str.end());
+    }
+
+    // Trim from both sides of the string using a predicate.
+    template <class Pred>
+    void trim(std::string &str, Pred &&pred) noexcept
+    {
+        ltrim(str, std::forward<Pred>(pred));
+        rtrim(str, std::forward<Pred>(pred));
+    }
+
     // Returns a virtual function from a virtual method table by its index.
     template <class T = u8 *>
     T get_virtual(const void *object, u16 index) noexcept

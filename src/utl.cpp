@@ -2,7 +2,6 @@
 #include "common.hpp"
 #include <cctype>
 #include <array>
-#include <algorithm>
 
 namespace utl
 {
@@ -23,12 +22,12 @@ namespace utl
 
     void ltrim(std::string &str) noexcept
     {
-        str.erase(str.begin(), std::find_if(str.begin(), str.end(), [](u8 ch) noexcept { return !std::isspace(ch); }));
+        ltrim(str, [](u8 ch) noexcept { return std::isspace(ch) == 0; });
     }
 
     void rtrim(std::string &str) noexcept
     {
-        str.erase(std::find_if(str.rbegin(), str.rend(), [](u8 ch) noexcept { return !std::isspace(ch); }).base(), str.end());
+        rtrim(str, [](u8 ch) noexcept { return std::isspace(ch) == 0; });
     }
 
     void trim(std::string &str) noexcept

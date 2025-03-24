@@ -89,7 +89,7 @@ void LuaScriptLoader::reset_scripts() noexcept
 
     // Run autorun scripts.
     std::error_code ec;
-    for (std::filesystem::directory_iterator it{m_autorun_dir, ec}, end; it != end && ec == std::error_code{}; it.increment(ec))
+    for (std::filesystem::directory_iterator it{m_autorun_dir, ec}, end{}; it != end && ec == std::error_code{}; it.increment(ec))
     {
         if (!it->is_regular_file(ec))
         {
@@ -131,6 +131,26 @@ void LuaScriptLoader::on_load() noexcept
     }
 }
 
+void LuaScriptLoader::on_level_init(std::string_view map_name) noexcept
+{
+    std::scoped_lock _{m_lua_mutex};
+
+    for (auto &&state : m_states)
+    {
+        state->on_level_init(map_name);
+    }
+}
+
+void LuaScriptLoader::on_level_shutdown() noexcept
+{
+    std::scoped_lock _{m_lua_mutex};
+
+    for (auto &&state : m_states)
+    {
+        state->on_level_shutdown();
+    }
+}
+
 void LuaScriptLoader::on_game_frame(bool simulating) noexcept
 {
     std::scoped_lock _{m_lua_mutex};
@@ -150,22 +170,27 @@ void LuaScriptLoader::on_game_frame(bool simulating) noexcept
     }
 }
 
-void LuaScriptLoader::on_level_init(std::string_view map_name) noexcept
+PLUGIN_RESULT
+LuaScriptLoader::on_client_connect(
+    bool *allow_connect, edict_t *edict, std::string_view name, std::string_view address, char *reject, i32 max_reject_len) noexcept
 {
     std::scoped_lock _{m_lua_mutex};
 
-    for (auto &&state : m_states)
-    {
-        state->on_level_init(map_name);
-    }
-}
-
-void LuaScriptLoader::on_level_shutdown() noexcept
-{
-    std::scoped_lock _{m_lua_mutex};
+    PLUGIN_RESULT result = PLUGIN_CONTINUE;
 
     for (auto &&state : m_states)
     {
-        state->on_level_shutdown();
+        result = state->on_client_connect(allow_connect, edict, name, address, reject, max_reject_len);
+        if (result == PLUGIN_STOP)
+        {
+            break;
+        }
+        // // Keep running, but only allow the first plugin to set the return value.
+        // else if (result == PLUGIN_CONTINUE)
+        // {
+        //
+        // }
     }
+
+    return result;
 }

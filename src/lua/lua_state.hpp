@@ -1,6 +1,7 @@
 #pragma once
 
 #include "type.hpp"
+#include "game.hpp"
 #include <tl/expected.hpp>
 #include <sol/sol.hpp>
 #include <mutex>
@@ -41,11 +42,13 @@ public:
     }
 
     // Callbacks.
-    void on_script_reset() noexcept;
-    void on_load() noexcept;
-    void on_level_init(std::string_view map_name) noexcept;
-    void on_level_shutdown() noexcept;
-    void on_game_frame(bool simulating) noexcept;
+    void          on_script_reset() noexcept;
+    void          on_load() noexcept;
+    void          on_level_init(std::string_view map_name) noexcept;
+    void          on_level_shutdown() noexcept;
+    void          on_game_frame(bool simulating) noexcept;
+    PLUGIN_RESULT on_client_connect(
+        bool *allow_connect, edict_t *edict, std::string_view name, std::string_view address, char *reject, i32 max_reject_len) noexcept;
 
 private:
     bool                 m_is_main_state{};
@@ -61,6 +64,7 @@ private:
         on_game_frame,
         on_level_init,
         on_level_shutdown,
+        on_client_connect,
     };
 
     const std::unordered_map<std::string, CallbackID> m_callback_names{
@@ -69,6 +73,7 @@ private:
         {"on_game_frame", CallbackID::on_game_frame},
         {"on_level_init", CallbackID::on_level_init},
         {"on_level_shutdown", CallbackID::on_level_shutdown},
+        {"on_client_connect", CallbackID::on_client_connect},
     };
 
     [[nodiscard]] std::optional<CallbackID> str_to_callback_id(const std::string &name) const noexcept;
