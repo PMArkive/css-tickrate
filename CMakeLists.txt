@@ -79,6 +79,7 @@ set(tickrate_headers
 set(tickrate_sources
     src/os.cpp
     src/utl.cpp
+    src/game.cpp
     src/lua/lua_state.cpp
     src/lua/lua_loader.cpp
     src/main.cpp)

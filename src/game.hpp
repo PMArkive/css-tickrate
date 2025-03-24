@@ -43,6 +43,28 @@ class edict_t
 public:
 };
 
+class Player
+{
+public:
+    Player() noexcept = default;
+    explicit Player(edict_t *edict) noexcept;
+
+    [[nodiscard]] i32 get_user_id() const noexcept
+    {
+        return m_user_id;
+    }
+
+    [[nodiscard]] bool valid() const noexcept
+    {
+        return m_valid;
+    }
+
+private:
+    edict_t *m_edict{};
+    i32      m_user_id{-1};
+    bool     m_valid{};
+};
+
 class InterfaceReg
 {
 public:
@@ -64,6 +86,11 @@ public:
 class CVEngineServer
 {
 public:
+    [[nodiscard]] i32 GetPlayerUserId(edict_t *edict) const noexcept
+    {
+        return utl::get_virtual<i32(TR_THISCALL *)(decltype(this), edict_t *)>(this, 15)(this, edict);
+    }
+
     [[nodiscard]] i32 IndexOfEdict(edict_t *edict) const noexcept
     {
         return utl::get_virtual<i32(TR_THISCALL *)(decltype(this), edict_t *)>(this, 18)(this, edict);
@@ -122,6 +149,7 @@ public:
     Game() noexcept = default;
 
     std::string     mod_name{};
+    CGlobalVars    *globals{};
     CVEngineServer *engine{};
 };
 

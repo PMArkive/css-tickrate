@@ -313,6 +313,7 @@ public:
         }
 
         g_game.mod_name = mod_value;
+        g_game.globals  = globals;
         g_game.engine   = engine;
 
         utl::print_info("Applying hooks...");

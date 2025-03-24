@@ -161,16 +161,67 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         return true;
     };
 
-    tr.new_usertype<edict_t>(
-        "edict",
+    // TODO: Make a cache of players to save on construction.
+
+    m_lua.new_usertype<Player>(
+        "Player",
+        sol::meta_function::construct,
+        [](sol::this_state L, sol::stack_object edict) noexcept -> sol::object
+        {
+            if (!edict.is<edict_t *>())
+            {
+                return sol::nil;
+            }
+
+            return sol::make_object(L, Player{edict.as<edict_t *>()});
+        },
+        sol::call_constructor,
+        [](sol::this_state L, sol::stack_object edict) noexcept -> sol::object
+        {
+            if (!edict.is<edict_t *>())
+            {
+                return sol::nil;
+            }
+
+            return sol::make_object(L, Player{edict.as<edict_t *>()});
+        },
+        "valid",
+        [](sol::stack_object self) noexcept { return self.is<Player>() ? self.as<Player>().valid() : false; },
+        "get_user_id",
+        [](sol::stack_object self) noexcept { return self.is<Player>() ? self.as<Player>().get_user_id() : -1; });
+
+    m_lua.new_usertype<edict_t>(
+        "Edict",
         sol::meta_function::construct,
         sol::no_constructor,
         "get_index",
-        [](edict_t *edict) noexcept { return g_game.engine->IndexOfEdict(edict); });
+        [](sol::stack_object self) noexcept { return self.is<edict_t *>() ? g_game.engine->IndexOfEdict(self.as<edict_t *>()) : 0; },
+        "to_player",
+        [](sol::this_state L, sol::stack_object self) noexcept -> sol::object
+        {
+            if (!self.is<edict_t *>())
+            {
+                return sol::nil;
+            }
+
+            return sol::make_object(L, Player{self.as<edict_t *>()});
+        });
 
     tr["game"] = &g_game;
-    tr.new_usertype<Game>(
-        "Game", sol::meta_function::construct, sol::no_constructor, "get_mod_name", [](Game &self) noexcept { return self.mod_name; });
+    m_lua.new_usertype<Game>(
+        "Game",
+        sol::meta_function::construct,
+        sol::no_constructor,
+        "get_mod_name",
+        [](sol::this_state L, sol::stack_object self) noexcept -> sol::object
+        {
+            if (!self.is<Game>())
+            {
+                return sol::nil;
+            }
+
+            return sol::make_object(L, self.as<Game>().mod_name);
+        });
 
     m_lua["tr"] = tr;
 }
