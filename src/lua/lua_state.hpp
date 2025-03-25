@@ -42,13 +42,15 @@ public:
     }
 
     // Callbacks.
-    void          on_script_reset() noexcept;
     void          on_load() noexcept;
+    void          on_script_reset() noexcept;
     void          on_level_init(std::string_view map_name) noexcept;
     void          on_level_shutdown() noexcept;
     void          on_game_frame(bool simulating) noexcept;
     PLUGIN_RESULT on_client_connect(
         bool *allow_connect, edict_t *edict, std::string_view name, std::string_view address, char *reject, i32 max_reject_len) noexcept;
+    void on_client_disconnect(edict_t *edict) noexcept;
+    void on_client_spawn(edict_t *edict, std::string_view name) noexcept;
 
 private:
     bool                 m_is_main_state{};
@@ -59,21 +61,24 @@ private:
     enum class CallbackID : u8
     {
         on_load = 0,
-        // on_unload,
         on_script_reset,
-        on_game_frame,
         on_level_init,
         on_level_shutdown,
+        on_game_frame,
         on_client_connect,
+        on_client_disconnect,
+        on_client_spawn,
     };
 
     const std::unordered_map<std::string, CallbackID> m_callback_names{
         {"on_load", CallbackID::on_load},
         {"on_script_reset", CallbackID::on_script_reset},
-        {"on_game_frame", CallbackID::on_game_frame},
         {"on_level_init", CallbackID::on_level_init},
         {"on_level_shutdown", CallbackID::on_level_shutdown},
+        {"on_game_frame", CallbackID::on_game_frame},
         {"on_client_connect", CallbackID::on_client_connect},
+        {"on_client_disconnect", CallbackID::on_client_disconnect},
+        {"on_client_spawn", CallbackID::on_client_spawn},
     };
 
     [[nodiscard]] std::optional<CallbackID> str_to_callback_id(const std::string &name) const noexcept;

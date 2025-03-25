@@ -166,46 +166,26 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
     m_lua.new_usertype<Player>(
         "Player",
         sol::meta_function::construct,
-        [](sol::this_state L, sol::stack_object edict) noexcept -> sol::object
-        {
-            if (!edict.is<edict_t *>())
-            {
-                return sol::nil;
-            }
-
-            return sol::make_object(L, Player{edict.as<edict_t *>()});
-        },
+        [](sol::this_state L, sol::stack_object edict) noexcept
+        { return edict.is<edict_t *>() ? sol::make_object(L, Player{edict.as<edict_t *>()}) : sol::nil; },
         sol::call_constructor,
-        [](sol::this_state L, sol::stack_object edict) noexcept -> sol::object
-        {
-            if (!edict.is<edict_t *>())
-            {
-                return sol::nil;
-            }
-
-            return sol::make_object(L, Player{edict.as<edict_t *>()});
-        },
+        [](sol::this_state L, sol::stack_object edict) noexcept
+        { return edict.is<edict_t *>() ? sol::make_object(L, Player{edict.as<edict_t *>()}) : sol::nil; },
         "valid",
         [](sol::stack_object self) noexcept { return self.is<Player>() ? self.as<Player>().valid() : false; },
         "get_user_id",
         [](sol::stack_object self) noexcept { return self.is<Player>() ? self.as<Player>().get_user_id() : -1; });
 
+    // TODO: Remove this. I think it makes more sense to cache everything manually and just expose a player for callbacks to use.
     m_lua.new_usertype<edict_t>(
         "Edict",
         sol::meta_function::construct,
         sol::no_constructor,
-        "get_index",
-        [](sol::stack_object self) noexcept { return self.is<edict_t *>() ? g_game.engine->IndexOfEdict(self.as<edict_t *>()) : 0; },
+        // "get_index",
+        // [](sol::stack_object self) noexcept { return self.is<edict_t *>() ? g_game.engine->IndexOfEdict(self.as<edict_t *>()) : 0; },
         "to_player",
-        [](sol::this_state L, sol::stack_object self) noexcept -> sol::object
-        {
-            if (!self.is<edict_t *>())
-            {
-                return sol::nil;
-            }
-
-            return sol::make_object(L, Player{self.as<edict_t *>()});
-        });
+        [](sol::this_state L, sol::stack_object self) noexcept
+        { return self.is<edict_t *>() ? sol::make_object(L, Player{self.as<edict_t *>()}) : sol::nil; });
 
     tr["game"] = &g_game;
     m_lua.new_usertype<Game>(
@@ -213,15 +193,8 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         sol::meta_function::construct,
         sol::no_constructor,
         "get_mod_name",
-        [](sol::this_state L, sol::stack_object self) noexcept -> sol::object
-        {
-            if (!self.is<Game>())
-            {
-                return sol::nil;
-            }
-
-            return sol::make_object(L, self.as<Game>().mod_name);
-        });
+        [](sol::this_state L, sol::stack_object self) noexcept
+        { return self.is<Game>() ? sol::make_object(L, self.as<Game>().mod_name) : sol::nil; });
 
     m_lua["tr"] = tr;
 }
@@ -279,20 +252,6 @@ tl::expected<void, std::string> LuaScriptState::run_script_file(const std::files
     return {};
 }
 
-void LuaScriptState::on_script_reset() noexcept
-{
-    std::scoped_lock _{m_exec_mutex};
-
-    for (auto &&cb : m_callbacks[CallbackID::on_script_reset])
-    {
-        if (auto result = cb(); !result.valid())
-        {
-            sol::error err = result;
-            utl::print_error("[LuaScriptState] `on_script_reset` error: {}", err.what());
-        }
-    }
-}
-
 void LuaScriptState::on_load() noexcept
 {
     std::scoped_lock _{m_exec_mutex};
@@ -303,6 +262,20 @@ void LuaScriptState::on_load() noexcept
         {
             sol::error err = result;
             utl::print_error("[LuaScriptState] `on_load` error: {}", err.what());
+        }
+    }
+}
+
+void LuaScriptState::on_script_reset() noexcept
+{
+    std::scoped_lock _{m_exec_mutex};
+
+    for (auto &&cb : m_callbacks[CallbackID::on_script_reset])
+    {
+        if (auto result = cb(); !result.valid())
+        {
+            sol::error err = result;
+            utl::print_error("[LuaScriptState] `on_script_reset` error: {}", err.what());
         }
     }
 }
@@ -409,4 +382,32 @@ LuaScriptState::on_client_connect(
     }
 
     return PLUGIN_CONTINUE;
+}
+
+void LuaScriptState::on_client_disconnect(edict_t *edict) noexcept
+{
+    std::scoped_lock _{m_exec_mutex};
+
+    for (auto &&cb : m_callbacks[CallbackID::on_client_disconnect])
+    {
+        if (auto result = cb(edict); !result.valid())
+        {
+            sol::error err = result;
+            utl::print_error("[LuaScriptState] `on_client_disconnect` error: {}", err.what());
+        }
+    }
+}
+
+void LuaScriptState::on_client_spawn(edict_t *edict, std::string_view name) noexcept
+{
+    std::scoped_lock _{m_exec_mutex};
+
+    for (auto &&cb : m_callbacks[CallbackID::on_client_spawn])
+    {
+        if (auto result = cb(edict, name); !result.valid())
+        {
+            sol::error err = result;
+            utl::print_error("[LuaScriptState] `on_client_spawn` error: {}", err.what());
+        }
+    }
 }

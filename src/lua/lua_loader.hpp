@@ -47,6 +47,8 @@ public:
     void          on_game_frame(bool simulating) noexcept;
     PLUGIN_RESULT on_client_connect(
         bool *allow_connect, edict_t *edict, std::string_view name, std::string_view address, char *reject, i32 max_reject_len) noexcept;
+    void on_client_disconnect(edict_t *edict) noexcept;
+    void on_client_spawn(edict_t *edict, std::string_view name) noexcept;
 
 private:
     std::filesystem::path                        m_autorun_dir{};

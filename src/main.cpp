@@ -350,6 +350,9 @@ public:
 
     void Unload() noexcept override
     {
+        // Notify scripts of unload.
+        g_lua_loader.reset_scripts();
+
         g_GetTickInterval_hook = {};
 
         utl::print_info("Unloaded.");
@@ -383,9 +386,15 @@ public:
 
     void ClientActive(edict_t *edict) noexcept override {}
 
-    void ClientDisconnect(edict_t *edict) noexcept override {}
+    void ClientDisconnect(edict_t *edict) noexcept override
+    {
+        g_lua_loader.on_client_disconnect(edict);
+    }
 
-    void ClientPutInServer(edict_t *edict, cstr player_name) noexcept override {}
+    void ClientPutInServer(edict_t *edict, cstr player_name) noexcept override
+    {
+        g_lua_loader.on_client_spawn(edict, player_name);
+    }
 
     void SetCommandClient(i32 index) noexcept override {}
 

@@ -38,31 +38,14 @@ enum EQueryCvarValueStatus : i32
     eQueryCvarValueStatus_CvarProtected,
 };
 
-class edict_t
+class CSteamID
 {
 public:
 };
 
-class Player
+class edict_t
 {
 public:
-    Player() noexcept = default;
-    explicit Player(edict_t *edict) noexcept;
-
-    [[nodiscard]] i32 get_user_id() const noexcept
-    {
-        return m_user_id;
-    }
-
-    [[nodiscard]] bool valid() const noexcept
-    {
-        return m_valid;
-    }
-
-private:
-    edict_t *m_edict{};
-    i32      m_user_id{-1};
-    bool     m_valid{};
 };
 
 class InterfaceReg
@@ -86,6 +69,9 @@ public:
 class CVEngineServer
 {
 public:
+    // GetClientSteamIDByPlayerIndex
+    // IsClientFullyAuthenticated
+
     [[nodiscard]] i32 GetPlayerUserId(edict_t *edict) const noexcept
     {
         return utl::get_virtual<i32(TR_THISCALL *)(decltype(this), edict_t *)>(this, 15)(this, edict);
@@ -140,6 +126,46 @@ class IGameEventListener
 public:
     virtual ~IGameEventListener() noexcept       = default;
     virtual void FireGameEvent(KeyValues *event) = 0;
+};
+
+// Custom player wrapper.
+class Player
+{
+public:
+    Player() noexcept = default;
+    explicit Player(edict_t *edict) noexcept;
+
+    [[nodiscard]] auto *get_edict() const noexcept
+    {
+        return m_edict;
+    }
+
+    [[nodiscard]] i32 get_ent_index() const noexcept
+    {
+        return m_ent_index;
+    }
+
+    [[nodiscard]] auto &get_steam_id() const noexcept
+    {
+        return m_steam_id;
+    }
+
+    [[nodiscard]] i32 get_user_id() const noexcept
+    {
+        return m_user_id;
+    }
+
+    [[nodiscard]] bool valid() const noexcept
+    {
+        return m_valid;
+    }
+
+private:
+    edict_t *m_edict{};
+    i32      m_ent_index{};
+    CSteamID m_steam_id{};
+    i32      m_user_id{-1};
+    bool     m_valid{};
 };
 
 // Game data.

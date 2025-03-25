@@ -74,6 +74,8 @@ void LuaScriptLoader::reset_scripts() noexcept
 {
     std::scoped_lock _{m_lua_mutex};
 
+    utl::print_info("[LuaScriptLoader] Resetting scripts...");
+
     // Only call the `on_script_reset` callbacks on the main state.
     if (m_main_state != nullptr)
     {
@@ -193,4 +195,24 @@ LuaScriptLoader::on_client_connect(
     }
 
     return result;
+}
+
+void LuaScriptLoader::on_client_disconnect(edict_t *edict) noexcept
+{
+    std::scoped_lock _{m_lua_mutex};
+
+    for (auto &&state : m_states)
+    {
+        state->on_client_disconnect(edict);
+    }
+}
+
+void LuaScriptLoader::on_client_spawn(edict_t *edict, std::string_view name) noexcept
+{
+    std::scoped_lock _{m_lua_mutex};
+
+    for (auto &&state : m_states)
+    {
+        state->on_client_spawn(edict, name);
+    }
 }
