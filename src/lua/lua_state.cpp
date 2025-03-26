@@ -374,8 +374,6 @@ PLUGIN_RESULT
 LuaScriptState::on_client_connect(
     bool *allow_connect, edict_t *edict, std::string_view name, std::string_view address, char *reject, i32 max_reject_len) noexcept
 {
-    utl::print_info("address = {}", address);
-
     // Add player to cache.
     i32 player_idx = g_game.engine->IndexOfEdict(edict);
     if (player_idx <= 0)
