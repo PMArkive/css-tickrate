@@ -12,13 +12,13 @@ void lua_panic_handler(sol::optional<std::string> maybe_msg) noexcept
         utl::print_error("Lua panic occurred:\n{}", *maybe_msg);
     }
 
-    // When this function exits, Lua will exhibit default behavior and abort().
+    // When this function exits, Lua will exhibit default behavior and `abort()`.
 }
 
 i32 lua_exception_handler(lua_State *L, [[maybe_unused]] sol::optional<const std::exception &> maybe_exception, sol::string_view description) noexcept
 {
     // state is the lua state, which you can wrap in a state_view if necessary maybe_exception will contain exception, if it exists description will
-    // either be the what() of the exception or a description saying that we hit the general-case catch(...).
+    // either be the `what()` of the exception or a description saying that we hit the general-case catch(...).
     utl::print_error("Lua exception occurred:\n{}", description);
 
     // you must push 1 element onto the stack to be transported through as the error object in Lua note that Lua -- and 99.5% of all Lua users and
@@ -26,7 +26,7 @@ i32 lua_exception_handler(lua_State *L, [[maybe_unused]] sol::optional<const std
     return sol::stack::push(L, description);
 }
 
-std::string get_lua_file_name(lua_State *L) noexcept
+std::string lua_get_file_name(lua_State *L) noexcept
 {
     // 0 = this func
     // 1 = lua func
@@ -36,7 +36,7 @@ std::string get_lua_file_name(lua_State *L) noexcept
         return "?";
     }
 
-    if (lua_getinfo(L, "S", &info) == 0 || info.source == nullptr)
+    if (lua_getinfo(L, "Sl", &info) == 0)
     {
         return "?";
     }
@@ -47,24 +47,24 @@ std::string get_lua_file_name(lua_State *L) noexcept
         return "?";
     }
 
-    return std::filesystem::path{source.substr(1)}.filename().string();
+    return fmt::format("{}:{}", std::filesystem::path{source.substr(1)}.filename().string(), info.currentline);
 }
 
 template <class... Args>
 void lua_print_info(lua_State *L, fmt::format_string<Args...> fmt, Args &&...args) noexcept
 {
-    utl::print_info("[Lua `{}`] {}", get_lua_file_name(L), fmt::format(fmt, std::forward<Args>(args)...));
+    utl::print_info("[Lua `{}`] {}", lua_get_file_name(L), fmt::format(fmt, std::forward<Args>(args)...));
 }
 
 template <class... Args>
 void lua_print_error(lua_State *L, fmt::format_string<Args...> fmt, Args &&...args) noexcept
 {
-    utl::print_error("[Lua `{}`] {}", get_lua_file_name(L), fmt::format(fmt, std::forward<Args>(args)...));
+    utl::print_error("[Lua `{}`] {}", lua_get_file_name(L), fmt::format(fmt, std::forward<Args>(args)...));
 }
 
 LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is_main_state}
 {
-    std::scoped_lock _{m_exec_mutex};
+    std::scoped_lock lock{m_exec_mutex};
 
     m_lua.set_panic(sol::c_call<decltype(&lua_panic_handler), &lua_panic_handler>);
     m_lua.set_exception_handler(&lua_exception_handler);
@@ -94,7 +94,8 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
     os["rename"]    = sol::nil;
     os["setlocale"] = sol::nil;
 
-    auto tr = m_lua.create_table();
+    // Create the `tr` table.
+    auto tr = m_lua.create_named_table("tr");
 
     tr["print_info"] = [](sol::this_state L, sol::stack_object value) noexcept
     {
@@ -134,7 +135,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
 
     tr["add_callback"] = [this](sol::this_state L, const std::string &name, sol::stack_object fn) noexcept
     {
-        std::scoped_lock _{m_exec_mutex};
+        std::scoped_lock lock{m_exec_mutex};
 
         if (!fn.is<sol::protected_function>())
         {
@@ -161,50 +162,85 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         return true;
     };
 
-    // TODO: Make a cache of players to save on construction.
+    // Protect the `tr` table.
+    sol::table tr_metatable           = m_lua.create_table_with();
+    tr[sol::meta_function::index]     = tr;
+    tr[sol::meta_function::new_index] = [](sol::this_state L) noexcept
+    {
+        lua_print_error(L, "Attempted to write to read-only table `tr`!");
+    };
+    tr_metatable[sol::metatable_key] = tr;
 
-    m_lua.new_usertype<Player>(
+    // Create the `Player` userdata.
+    auto player_ud = m_lua.new_usertype<Player>(
         "Player",
         sol::meta_function::construct,
-        [](sol::this_state L, sol::stack_object edict) noexcept
-        { return edict.is<edict_t *>() ? sol::make_object(L, Player{edict.as<edict_t *>()}) : sol::nil; },
+        [this](sol::this_state L, sol::stack_object index) noexcept
+        { return index.is<i32>() ? sol::make_object(L, get_player(index.as<i32>())) : sol::nil; },
         sol::call_constructor,
-        [](sol::this_state L, sol::stack_object edict) noexcept
-        { return edict.is<edict_t *>() ? sol::make_object(L, Player{edict.as<edict_t *>()}) : sol::nil; },
+        [this](sol::this_state L, sol::stack_object index) noexcept
+        { return index.is<i32>() ? sol::make_object(L, get_player(index.as<i32>())) : sol::nil; },
         "valid",
-        [](sol::stack_object self) noexcept { return self.is<Player>() ? self.as<Player>().valid() : false; },
+        [](sol::stack_object self) noexcept { return self.is<Player *>() ? self.as<Player *>()->valid() : false; },
+        "get_index",
+        [](sol::stack_object self) noexcept { return self.is<Player *>() ? self.as<Player *>()->get_index() : 0; },
+        "get_name",
+        [](sol::stack_object self) noexcept { return self.is<Player *>() ? self.as<Player *>()->get_name() : ""; },
+        "get_ip",
+        [](sol::stack_object self, sol::stack_object remove_port) noexcept -> std::string
+        {
+            if (!self.is<Player *>())
+            {
+                return "";
+            }
+
+            bool value = true;
+            if (remove_port.is<bool>())
+            {
+                value = remove_port.as<bool>();
+            }
+
+            return self.as<Player *>()->get_ip(value);
+        },
         "get_user_id",
-        [](sol::stack_object self) noexcept { return self.is<Player>() ? self.as<Player>().get_user_id() : -1; });
+        [](sol::stack_object self) noexcept { return self.is<Player *>() ? self.as<Player *>()->get_user_id() : -1; });
 
-    // TODO: Remove this. I think it makes more sense to cache everything manually and just expose a player for callbacks to use.
-    m_lua.new_usertype<edict_t>(
-        "Edict",
-        sol::meta_function::construct,
-        sol::no_constructor,
-        // "get_index",
-        // [](sol::stack_object self) noexcept { return self.is<edict_t *>() ? g_game.engine->IndexOfEdict(self.as<edict_t *>()) : 0; },
-        "to_player",
-        [](sol::this_state L, sol::stack_object self) noexcept
-        { return self.is<edict_t *>() ? sol::make_object(L, Player{self.as<edict_t *>()}) : sol::nil; });
+    auto player_table                               = m_lua.create_named_table("Player");
+    auto player_metatable                           = m_lua.create_table_with();
+    player_metatable[sol::meta_function::index]     = player_ud;
+    player_metatable[sol::meta_function::new_index] = [](sol::this_state L)
+    {
+        lua_print_error(L, "Attempted to write to read-only usertype `Player`!");
+    };
+    player_table[sol::metatable_key] = player_metatable;
 
-    tr["game"] = &g_game;
-    m_lua.new_usertype<Game>(
+    // Create the `Game` userdata.
+    auto game_ud = m_lua.new_usertype<Game>(
         "Game",
         sol::meta_function::construct,
         sol::no_constructor,
         "get_mod_name",
         [](sol::this_state L, sol::stack_object self) noexcept
-        { return self.is<Game>() ? sol::make_object(L, self.as<Game>().mod_name) : sol::nil; });
+        { return self.is<Game *>() ? sol::make_object(L, self.as<Game *>()->mod_name) : sol::nil; });
 
-    m_lua["tr"] = tr;
+    tr["game"] = &g_game;
+
+    auto game_table                               = m_lua.create_named_table("Game");
+    auto game_metatable                           = m_lua.create_table_with();
+    game_metatable[sol::meta_function::index]     = game_ud;
+    game_metatable[sol::meta_function::new_index] = [](sol::this_state L)
+    {
+        lua_print_error(L, "Attempted to write to read-only usertype `Game`!");
+    };
+    game_table[sol::metatable_key] = game_metatable;
 }
 
 LuaScriptState::~LuaScriptState() noexcept
 {
-    std::scoped_lock _{m_exec_mutex};
+    std::scoped_lock lock{m_exec_mutex};
 }
 
-std::optional<LuaScriptState::CallbackID> LuaScriptState::str_to_callback_id(const std::string &name) const noexcept
+[[nodiscard]] std::optional<LuaScriptState::CallbackID> LuaScriptState::str_to_callback_id(const std::string &name) const noexcept
 {
     auto found = m_callback_names.find(name);
     if (found == m_callback_names.end())
@@ -215,9 +251,19 @@ std::optional<LuaScriptState::CallbackID> LuaScriptState::str_to_callback_id(con
     return found->second;
 }
 
+[[nodiscard]] Player *LuaScriptState::get_player(i32 index) const noexcept
+{
+    return index >= 1 && (usize)(index - 1) < m_players.size() ? (Player *)&m_players[index - 1] : nullptr;
+}
+
+[[nodiscard]] Player *LuaScriptState::get_player(edict_t *edict) const noexcept
+{
+    return edict != nullptr ? get_player(g_game.engine->IndexOfEdict(edict)) : nullptr;
+}
+
 tl::expected<void, std::string> LuaScriptState::run_script_file(const std::filesystem::path &full_path) noexcept
 {
-    std::scoped_lock _{m_exec_mutex};
+    std::scoped_lock lock{m_exec_mutex};
 
     // Only allow requiring from the directory the script was run from.
     auto old_path  = m_lua["package"]["path"];
@@ -254,7 +300,7 @@ tl::expected<void, std::string> LuaScriptState::run_script_file(const std::files
 
 void LuaScriptState::on_load() noexcept
 {
-    std::scoped_lock _{m_exec_mutex};
+    std::scoped_lock lock{m_exec_mutex};
 
     for (auto &&cb : m_callbacks[CallbackID::on_load])
     {
@@ -268,7 +314,7 @@ void LuaScriptState::on_load() noexcept
 
 void LuaScriptState::on_script_reset() noexcept
 {
-    std::scoped_lock _{m_exec_mutex};
+    std::scoped_lock lock{m_exec_mutex};
 
     for (auto &&cb : m_callbacks[CallbackID::on_script_reset])
     {
@@ -282,7 +328,7 @@ void LuaScriptState::on_script_reset() noexcept
 
 void LuaScriptState::on_level_init(std::string_view map_name) noexcept
 {
-    std::scoped_lock _{m_exec_mutex};
+    std::scoped_lock lock{m_exec_mutex};
 
     for (auto &&cb : m_callbacks[CallbackID::on_level_init])
     {
@@ -296,7 +342,7 @@ void LuaScriptState::on_level_init(std::string_view map_name) noexcept
 
 void LuaScriptState::on_level_shutdown() noexcept
 {
-    std::scoped_lock _{m_exec_mutex};
+    std::scoped_lock lock{m_exec_mutex};
 
     for (auto &&cb : m_callbacks[CallbackID::on_level_shutdown])
     {
@@ -310,7 +356,7 @@ void LuaScriptState::on_level_shutdown() noexcept
 
 void LuaScriptState::on_game_frame(bool simulating) noexcept
 {
-    std::scoped_lock _{m_exec_mutex};
+    std::scoped_lock lock{m_exec_mutex};
 
     for (auto &&cb : m_callbacks[CallbackID::on_game_frame])
     {
@@ -328,55 +374,74 @@ PLUGIN_RESULT
 LuaScriptState::on_client_connect(
     bool *allow_connect, edict_t *edict, std::string_view name, std::string_view address, char *reject, i32 max_reject_len) noexcept
 {
-    std::scoped_lock _{m_exec_mutex};
+    utl::print_info("address = {}", address);
 
-    for (auto &&cb : m_callbacks[CallbackID::on_client_connect])
+    // Add player to cache.
+    i32 player_idx = g_game.engine->IndexOfEdict(edict);
+    if (player_idx <= 0)
     {
-        if (auto result = cb(edict, name, address); !result.valid())
+        return PLUGIN_STOP;
+    }
+
+    if (m_players.size() < (usize)player_idx)
+    {
+        m_players.resize(player_idx);
+    }
+
+    auto *player = &m_players[player_idx - 1];
+    *player      = Player{edict, name, address};
+
+    {
+        std::scoped_lock lock{m_exec_mutex};
+
+        for (auto &&cb : m_callbacks[CallbackID::on_client_connect])
         {
-            sol::error err = result;
-            utl::print_error("[LuaScriptState] `on_game_frame` error: {}", err.what());
-        }
-        else
-        {
-            bool allow         = false;
-            auto deny_result   = result[0];
-            auto reason_result = result[1];
-
-            if (deny_result.is<bool>())
+            if (auto result = cb(player); !result.valid())
             {
-                allow = deny_result.get<bool>();
+                sol::error err = result;
+                utl::print_error("[LuaScriptState] `on_game_frame` error: {}", err.what());
             }
-
-            if (allow_connect != nullptr)
+            else
             {
-                *allow_connect = allow;
-            }
+                bool allow         = false;
+                auto deny_result   = result[0];
+                auto reason_result = result[1];
 
-            if (!allow)
-            {
-                std::string reason{};
-                if (reason_result.is<std::string>())
+                if (deny_result.is<bool>())
                 {
-                    reason = reason_result.get<std::string>();
+                    allow = deny_result.get<bool>();
                 }
 
-                if (!reason.empty())
+                if (allow_connect != nullptr)
                 {
-                    if (reason.size() < (usize)(max_reject_len - 1))
-                    {
-                        std::memcpy(reject, reason.data(), reason.size());
-                        reject[reason.size()] = '\0';
-                    }
-                    else
-                    {
-                        reason = reason.substr(0, max_reject_len - 4) + "...";
-                        std::memcpy(reject, reason.data(), reason.size());
-                        reject[reason.size()] = '\0';
-                    }
+                    *allow_connect = allow;
                 }
 
-                return PLUGIN_STOP;
+                if (!allow)
+                {
+                    std::string reason{};
+                    if (reason_result.is<std::string>())
+                    {
+                        reason = reason_result.get<std::string>();
+                    }
+
+                    if (!reason.empty())
+                    {
+                        if (reason.size() < (usize)(max_reject_len - 1))
+                        {
+                            std::memcpy(reject, reason.data(), reason.size());
+                            reject[reason.size()] = '\0';
+                        }
+                        else
+                        {
+                            reason = reason.substr(0, max_reject_len - 4) + "...";
+                            std::memcpy(reject, reason.data(), reason.size());
+                            reject[reason.size()] = '\0';
+                        }
+                    }
+
+                    return PLUGIN_STOP;
+                }
             }
         }
     }
@@ -386,21 +451,32 @@ LuaScriptState::on_client_connect(
 
 void LuaScriptState::on_client_disconnect(edict_t *edict) noexcept
 {
-    std::scoped_lock _{m_exec_mutex};
-
-    for (auto &&cb : m_callbacks[CallbackID::on_client_disconnect])
+    auto *player = get_player(edict);
+    if (player == nullptr)
     {
-        if (auto result = cb(edict); !result.valid())
+        return;
+    }
+
+    {
+        std::scoped_lock lock{m_exec_mutex};
+
+        for (auto &&cb : m_callbacks[CallbackID::on_client_disconnect])
         {
-            sol::error err = result;
-            utl::print_error("[LuaScriptState] `on_client_disconnect` error: {}", err.what());
+            if (auto result = cb(player); !result.valid())
+            {
+                sol::error err = result;
+                utl::print_error("[LuaScriptState] `on_client_disconnect` error: {}", err.what());
+            }
         }
     }
+
+    // Reset player in cache.
+    *player = {};
 }
 
 void LuaScriptState::on_client_spawn(edict_t *edict, std::string_view name) noexcept
 {
-    std::scoped_lock _{m_exec_mutex};
+    std::scoped_lock lock{m_exec_mutex};
 
     for (auto &&cb : m_callbacks[CallbackID::on_client_spawn])
     {

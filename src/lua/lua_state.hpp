@@ -82,6 +82,9 @@ private:
     };
 
     [[nodiscard]] std::optional<CallbackID> str_to_callback_id(const std::string &name) const noexcept;
+    [[nodiscard]] Player                   *get_player(i32 index) const noexcept;
+    [[nodiscard]] Player                   *get_player(edict_t *edict) const noexcept;
 
     std::unordered_map<CallbackID, std::vector<sol::protected_function>> m_callbacks{};
+    std::vector<Player>                                                  m_players{};
 };

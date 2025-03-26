@@ -4,6 +4,7 @@
 #include "type.hpp"
 #include "utl.hpp"
 #include <string>
+#include <string_view>
 
 // Engine stuff.
 using CreateInterfaceFn      = void *(TR_CCALL *)(cstr name, i32 *return_code);
@@ -133,16 +134,23 @@ class Player
 {
 public:
     Player() noexcept = default;
-    explicit Player(edict_t *edict) noexcept;
+    explicit Player(edict_t *edict, std::string_view name, std::string_view address) noexcept;
+
+    std::string get_ip(bool remove_port = true) noexcept;
 
     [[nodiscard]] auto *get_edict() const noexcept
     {
         return m_edict;
     }
 
-    [[nodiscard]] i32 get_ent_index() const noexcept
+    [[nodiscard]] auto &get_name() const noexcept
     {
-        return m_ent_index;
+        return m_name;
+    }
+
+    [[nodiscard]] i32 get_index() const noexcept
+    {
+        return m_index;
     }
 
     [[nodiscard]] auto &get_steam_id() const noexcept
@@ -161,11 +169,13 @@ public:
     }
 
 private:
-    edict_t *m_edict{};
-    i32      m_ent_index{};
-    CSteamID m_steam_id{};
-    i32      m_user_id{-1};
-    bool     m_valid{};
+    edict_t    *m_edict{};
+    std::string m_name{};
+    std::string m_address{}, m_address_no_port{};
+    i32         m_index{};
+    CSteamID    m_steam_id{};
+    i32         m_user_id{-1};
+    bool        m_valid{};
 };
 
 // Game data.
