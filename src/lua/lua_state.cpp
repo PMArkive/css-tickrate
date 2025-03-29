@@ -95,9 +95,10 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
     os["setlocale"] = sol::nil;
 
     // Create the `tr` table.
-    auto tr = m_lua.create_named_table("tr");
+    auto tr           = m_lua.create_named_table("tr");
+    auto tr_metatable = m_lua.create_table_with();
 
-    tr["print_info"] = [](sol::this_state L, sol::stack_object value) noexcept
+    tr_metatable["print_info"] = [](sol::this_state L, sol::stack_object value) noexcept
     {
         if (value.is<std::string_view>())
         {
@@ -114,7 +115,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         }
     };
 
-    tr["print_error"] = [](sol::this_state L, sol::stack_object value) noexcept
+    tr_metatable["print_error"] = [](sol::this_state L, sol::stack_object value) noexcept
     {
         if (value.is<std::string_view>())
         {
@@ -131,9 +132,9 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         }
     };
 
-    m_lua["print"] = tr["print_info"];
+    m_lua["print"] = tr_metatable["print_info"];
 
-    tr["add_callback"] = [this](sol::this_state L, const std::string &name, sol::stack_object fn) noexcept
+    tr_metatable["add_callback"] = [this](sol::this_state L, const std::string &name, sol::stack_object fn) noexcept
     {
         std::scoped_lock lock{m_exec_mutex};
 
@@ -162,14 +163,15 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         return true;
     };
 
+    tr["game"] = &g_game;
+
     // Protect the `tr` table.
-    sol::table tr_metatable           = m_lua.create_table_with();
-    tr[sol::meta_function::index]     = tr;
-    tr[sol::meta_function::new_index] = [](sol::this_state L) noexcept
+    tr_metatable[sol::meta_function::index]     = tr_metatable;
+    tr_metatable[sol::meta_function::new_index] = [](sol::this_state L)
     {
         lua_print_error(L, "Attempted to write to read-only table `tr`!");
     };
-    tr_metatable[sol::metatable_key] = tr;
+    tr[sol::metatable_key] = tr_metatable;
 
     // Create the `Player` userdata.
     auto player_ud = m_lua.new_usertype<Player>(
@@ -205,6 +207,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         "get_user_id",
         [](sol::stack_object self) noexcept { return self.is<Player *>() ? self.as<Player *>()->get_user_id() : -1; });
 
+    // Protect the `Player` userdata.
     auto player_table                               = m_lua.create_named_table("Player");
     auto player_metatable                           = m_lua.create_table_with();
     player_metatable[sol::meta_function::index]     = player_ud;
@@ -223,8 +226,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         [](sol::this_state L, sol::stack_object self) noexcept
         { return self.is<Game *>() ? sol::make_object(L, self.as<Game *>()->mod_name) : sol::nil; });
 
-    tr["game"] = &g_game;
-
+    // Protect the `Game` userdata.
     auto game_table                               = m_lua.create_named_table("Game");
     auto game_metatable                           = m_lua.create_table_with();
     game_metatable[sol::meta_function::index]     = game_ud;
