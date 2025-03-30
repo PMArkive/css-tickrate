@@ -15,8 +15,9 @@ class CCommand;
 
 using QueryCvarCookie_t = i32;
 
-constexpr f32 MINIMUM_TICK_INTERVAL = 0.001f;
-constexpr f32 MAXIMUM_TICK_INTERVAL = 0.1f;
+constexpr usize MAX_PLAYERS           = 101;
+constexpr f32   MINIMUM_TICK_INTERVAL = 0.001f;
+constexpr f32   MAXIMUM_TICK_INTERVAL = 0.1f;
 
 enum : i32
 {
@@ -81,6 +82,11 @@ public:
     [[nodiscard]] i32 IndexOfEdict(edict_t *edict) const noexcept
     {
         return utl::get_virtual<i32(TR_THISCALL *)(decltype(this), edict_t *)>(this, 18)(this, edict);
+    }
+
+    [[nodiscard]] CSteamID *GetClientSteamID(edict_t *edict) const noexcept
+    {
+        return utl::get_virtual<CSteamID *(TR_THISCALL *)(decltype(this), edict_t *)>(this, 110)(this, edict);
     }
 };
 

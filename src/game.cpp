@@ -8,14 +8,14 @@ Player::Player(edict_t *edict, std::string_view name, std::string_view address) 
         return;
     }
 
-    // auto *steam_id = g_game.engine->GetClientSteamIDByPlayerIndex(m_ent_index);
-    // if (steam_id == nullptr)
-    // {
-    //     return;
-    // }
+    auto *steam_id = g_game.engine->GetClientSteamID(m_edict);
+    if (steam_id == nullptr)
+    {
+        return;
+    }
 
-    // m_steam_id = *steam_id;
-    m_user_id = g_game.engine->GetPlayerUserId(m_edict);
+    m_steam_id = *steam_id;
+    m_user_id  = g_game.engine->GetPlayerUserId(m_edict);
     if (m_user_id == -1)
     {
         return;

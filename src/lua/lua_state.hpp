@@ -85,6 +85,9 @@ private:
     [[nodiscard]] Player                   *get_player(i32 index) const noexcept;
     [[nodiscard]] Player                   *get_player(edict_t *edict) const noexcept;
 
+    static Player s_null_player;
+
     std::unordered_map<CallbackID, std::vector<sol::protected_function>> m_callbacks{};
+    usize                                                                m_num_players{};
     std::vector<Player>                                                  m_players{};
 };
