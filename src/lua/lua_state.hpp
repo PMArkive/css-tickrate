@@ -6,6 +6,7 @@
 #include <sol/sol.hpp>
 #include <mutex>
 #include <optional>
+#include <array>
 #include <vector>
 #include <unordered_map>
 #include <string>
@@ -68,6 +69,7 @@ private:
         on_client_connect,
         on_client_disconnect,
         on_client_spawn,
+        max,
     };
 
     const std::unordered_map<std::string, CallbackID> m_callback_names{
@@ -85,9 +87,9 @@ private:
     [[nodiscard]] Player                   *get_player(i32 index) const noexcept;
     [[nodiscard]] Player                   *get_player(edict_t *edict) const noexcept;
 
-    static Player s_null_player;
+    static sol::object s_null_player; // Used to return an empty player object.
 
-    std::unordered_map<CallbackID, std::vector<sol::protected_function>> m_callbacks{};
-    usize                                                                m_num_players{};
-    std::vector<Player>                                                  m_players{};
+    std::array<std::vector<sol::function>, (usize)CallbackID::max> m_callbacks{};
+    usize                                                          m_num_players{};
+    std::vector<Player>                                            m_players{};
 };

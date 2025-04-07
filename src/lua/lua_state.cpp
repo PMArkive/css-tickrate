@@ -5,7 +5,7 @@
 #include <utility>
 #include <algorithm>
 
-Player LuaScriptState::s_null_player{};
+sol::object LuaScriptState::s_null_player{};
 
 void lua_panic_handler(sol::optional<std::string> maybe_msg) noexcept
 {
@@ -33,12 +33,7 @@ std::string lua_get_file_name(lua_State *L) noexcept
     // 0 = this func
     // 1 = lua func
     lua_Debug info;
-    if (lua_getstack(L, 1, &info) != 1)
-    {
-        return "?";
-    }
-
-    if (lua_getinfo(L, "Sl", &info) == 0)
+    if (lua_getstack(L, 1, &info) != 1 || lua_getinfo(L, "Sl", &info) == 0)
     {
         return "?";
     }
@@ -96,6 +91,9 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
     os["rename"]    = sol::nil;
     os["setlocale"] = sol::nil;
 
+    static Player null_player{};
+    s_null_player = sol::make_object(m_lua, &null_player);
+
     // Create the `tr` table.
     auto tr_metatable = m_lua.create_table_with();
 
@@ -107,7 +105,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         }
         else
         {
-            auto *str = luaL_tolstring(L, value.stack_index(), nullptr);
+            cstr str = luaL_tolstring(L, value.stack_index(), nullptr);
 
             lua_print_info(L, "{}", str);
 
@@ -123,7 +121,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         }
         else
         {
-            auto *str = luaL_tolstring(L, value.stack_index(), nullptr);
+            cstr str = luaL_tolstring(L, value.stack_index(), nullptr);
 
             lua_print_error(L, "{}", str);
 
@@ -133,9 +131,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
     };
     tr_metatable["add_callback"] = [this](sol::this_state L, const std::string &name, sol::stack_object fn) noexcept
     {
-        std::scoped_lock lock{m_exec_mutex};
-
-        if (!fn.is<sol::protected_function>())
+        if (!fn.is<sol::function>())
         {
             return false;
         }
@@ -147,7 +143,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
             return false;
         }
 
-        auto &cbs = m_callbacks[*found_id];
+        auto &cbs = m_callbacks[(usize)*found_id];
 
         // Don't add another hook if the function is the same.
         if (std::find(cbs.begin(), cbs.end(), fn) != cbs.end())
@@ -172,20 +168,20 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
     {
         if (!index.is<i32>())
         {
-            return sol::make_object(L, &s_null_player);
+            return s_null_player;
         }
 
         auto *player = get_player(index.as<i32>());
         if (player == nullptr)
         {
-            return sol::make_object(L, &s_null_player);
+            return s_null_player;
         }
 
         return sol::make_object(L, player);
     };
-    players_metatable["get_all"] = [this]() noexcept
+    players_metatable["get_all"] = [this](sol::this_state L) noexcept
     {
-        std::vector<Player *> result{};
+        auto table = sol::state_view{L}.create_table();
 
         for (auto &&player : m_players)
         {
@@ -194,18 +190,19 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
                 continue;
             }
 
-            result.emplace_back(&player);
+            table.add(&player);
         }
 
-        return result;
+        return table;
     };
+
+    // Protect the `tr.players` table.
     players_metatable[sol::meta_function::index]     = players_metatable;
     players_metatable[sol::meta_function::new_index] = [](sol::this_state L)
     {
         lua_print_error(L, "Attempted to write to read-only table `tr.players`!");
     };
 
-    // Protect the `tr.players` table.
     auto players                = tr_metatable.create_named("players");
     players[sol::metatable_key] = players_metatable;
 
@@ -233,13 +230,13 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         {
             if (!index.is<i32>())
             {
-                return sol::make_object(L, &s_null_player);
+                return s_null_player;
             }
 
             auto *player = get_player(index.as<i32>());
             if (player == nullptr)
             {
-                return sol::make_object(L, &s_null_player);
+                return s_null_player;
             }
 
             return sol::make_object(L, player);
@@ -249,13 +246,13 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         {
             if (!index.is<i32>())
             {
-                return sol::make_object(L, &s_null_player);
+                return s_null_player;
             }
 
             auto *player = get_player(index.as<i32>());
             if (player == nullptr)
             {
-                return sol::make_object(L, &s_null_player);
+                return s_null_player;
             }
 
             return sol::make_object(L, player);
@@ -383,7 +380,7 @@ void LuaScriptState::on_load() noexcept
 {
     std::scoped_lock lock{m_exec_mutex};
 
-    for (auto &&cb : m_callbacks[CallbackID::on_load])
+    for (auto &&cb : m_callbacks[(usize)CallbackID::on_load])
     {
         if (auto result = cb(); !result.valid())
         {
@@ -397,7 +394,7 @@ void LuaScriptState::on_script_reset() noexcept
 {
     std::scoped_lock lock{m_exec_mutex};
 
-    for (auto &&cb : m_callbacks[CallbackID::on_script_reset])
+    for (auto &&cb : m_callbacks[(usize)CallbackID::on_script_reset])
     {
         if (auto result = cb(); !result.valid())
         {
@@ -411,7 +408,7 @@ void LuaScriptState::on_level_init(std::string_view map_name) noexcept
 {
     std::scoped_lock lock{m_exec_mutex};
 
-    for (auto &&cb : m_callbacks[CallbackID::on_level_init])
+    for (auto &&cb : m_callbacks[(usize)CallbackID::on_level_init])
     {
         if (auto result = cb(map_name); !result.valid())
         {
@@ -425,7 +422,7 @@ void LuaScriptState::on_level_shutdown() noexcept
 {
     std::scoped_lock lock{m_exec_mutex};
 
-    for (auto &&cb : m_callbacks[CallbackID::on_level_shutdown])
+    for (auto &&cb : m_callbacks[(usize)CallbackID::on_level_shutdown])
     {
         if (auto result = cb(); !result.valid())
         {
@@ -439,7 +436,7 @@ void LuaScriptState::on_game_frame(bool simulating) noexcept
 {
     std::scoped_lock lock{m_exec_mutex};
 
-    for (auto &&cb : m_callbacks[CallbackID::on_game_frame])
+    for (auto &&cb : m_callbacks[(usize)CallbackID::on_game_frame])
     {
         if (auto result = cb(simulating); !result.valid())
         {
@@ -455,6 +452,8 @@ PLUGIN_RESULT
 LuaScriptState::on_client_connect(
     bool *allow_connect, edict_t *edict, std::string_view name, std::string_view address, char *reject, i32 max_reject_len) noexcept
 {
+    std::scoped_lock lock{m_exec_mutex};
+
     // Add player to cache.
     i32 player_idx = g_game.engine->IndexOfEdict(edict);
     if (player_idx <= 0 || (usize)player_idx > MAX_PLAYERS)
@@ -472,57 +471,53 @@ LuaScriptState::on_client_connect(
     auto *player = &m_players[player_idx - 1];
     *player      = Player{edict, name, address};
 
+    for (auto &&cb : m_callbacks[(usize)CallbackID::on_client_connect])
     {
-        std::scoped_lock lock{m_exec_mutex};
-
-        for (auto &&cb : m_callbacks[CallbackID::on_client_connect])
+        if (auto result = cb(player); !result.valid())
         {
-            if (auto result = cb(player); !result.valid())
+            sol::error err = result;
+            utl::print_error("[LuaScriptState] `on_game_frame` error: {}", err.what());
+        }
+        else
+        {
+            bool allow         = false;
+            auto deny_result   = result[0];
+            auto reason_result = result[1];
+
+            if (deny_result.is<bool>())
             {
-                sol::error err = result;
-                utl::print_error("[LuaScriptState] `on_game_frame` error: {}", err.what());
+                allow = deny_result.get<bool>();
             }
-            else
+
+            if (allow_connect != nullptr)
             {
-                bool allow         = false;
-                auto deny_result   = result[0];
-                auto reason_result = result[1];
+                *allow_connect = allow;
+            }
 
-                if (deny_result.is<bool>())
+            if (!allow)
+            {
+                std::string reason{};
+                if (reason_result.is<std::string>())
                 {
-                    allow = deny_result.get<bool>();
+                    reason = reason_result.get<std::string>();
                 }
 
-                if (allow_connect != nullptr)
+                if (!reason.empty())
                 {
-                    *allow_connect = allow;
-                }
-
-                if (!allow)
-                {
-                    std::string reason{};
-                    if (reason_result.is<std::string>())
+                    if (reason.size() < (usize)(max_reject_len - 1))
                     {
-                        reason = reason_result.get<std::string>();
+                        std::memcpy(reject, reason.data(), reason.size());
+                        reject[reason.size()] = '\0';
                     }
-
-                    if (!reason.empty())
+                    else
                     {
-                        if (reason.size() < (usize)(max_reject_len - 1))
-                        {
-                            std::memcpy(reject, reason.data(), reason.size());
-                            reject[reason.size()] = '\0';
-                        }
-                        else
-                        {
-                            reason = reason.substr(0, max_reject_len - 4) + "...";
-                            std::memcpy(reject, reason.data(), reason.size());
-                            reject[reason.size()] = '\0';
-                        }
+                        reason = reason.substr(0, max_reject_len - 4) + "...";
+                        std::memcpy(reject, reason.data(), reason.size());
+                        reject[reason.size()] = '\0';
                     }
-
-                    return PLUGIN_STOP;
                 }
+
+                return PLUGIN_STOP;
             }
         }
     }
@@ -532,22 +527,20 @@ LuaScriptState::on_client_connect(
 
 void LuaScriptState::on_client_disconnect(edict_t *edict) noexcept
 {
+    std::scoped_lock lock{m_exec_mutex};
+
     auto *player = get_player(edict);
     if (player == nullptr)
     {
         return;
     }
 
+    for (auto &&cb : m_callbacks[(usize)CallbackID::on_client_disconnect])
     {
-        std::scoped_lock lock{m_exec_mutex};
-
-        for (auto &&cb : m_callbacks[CallbackID::on_client_disconnect])
+        if (auto result = cb(player); !result.valid())
         {
-            if (auto result = cb(player); !result.valid())
-            {
-                sol::error err = result;
-                utl::print_error("[LuaScriptState] `on_client_disconnect` error: {}", err.what());
-            }
+            sol::error err = result;
+            utl::print_error("[LuaScriptState] `on_client_disconnect` error: {}", err.what());
         }
     }
 
@@ -560,7 +553,7 @@ void LuaScriptState::on_client_spawn(edict_t *edict, std::string_view name) noex
 {
     std::scoped_lock lock{m_exec_mutex};
 
-    for (auto &&cb : m_callbacks[CallbackID::on_client_spawn])
+    for (auto &&cb : m_callbacks[(usize)CallbackID::on_client_spawn])
     {
         if (auto result = cb(edict, name); !result.valid())
         {
