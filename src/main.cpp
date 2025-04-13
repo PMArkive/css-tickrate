@@ -3,7 +3,9 @@
 #include "utl.hpp"
 #include "os.hpp"
 #include "game.hpp"
+#if TR_USE_LUA
 #include "lua/lua_loader.hpp"
+#endif
 #include <tl/expected.hpp>
 #include <fmt/format.h>
 #include <safetyhook/safetyhook.hpp>
@@ -17,7 +19,9 @@
 #include <filesystem>
 
 // Global variables, etc.
-LuaScriptLoader  g_lua_loader{};
+#if TR_USE_LUA
+LuaScriptLoader g_lua_loader{};
+#endif
 u16              g_desired_tickrate{};
 SafetyHookInline g_GetTickInterval_hook{};
 
@@ -138,19 +142,18 @@ public:
             return false;
         }
 
-        // Make sure autorun directory exists.
-        std::filesystem::path autorun_dir{};
+        // Make sure plugin directory exists.
+        // TODO: Make a game config system for offsets/virtuals/etc.
+        std::filesystem::path plugin_dir{};
         {
             std::filesystem::path addons_path = our_module_full_path;
             addons_path                       = addons_path.parent_path().make_preferred();
-
-            auto plugin_dir = addons_path / "tickrate";
-            autorun_dir     = plugin_dir / "autorun";
+            plugin_dir                        = addons_path / "tickrate";
 
             std::error_code ec;
-            if (std::filesystem::create_directories(autorun_dir, ec); ec != std::error_code{})
+            if (std::filesystem::create_directories(plugin_dir, ec); ec != std::error_code{})
             {
-                utl::print_error("Failed to create autorun directory.");
+                utl::print_error("Failed to create the plugin directory.");
                 return false;
             }
         }
@@ -334,14 +337,16 @@ public:
 
         g_GetTickInterval_hook = std::move(*hook_result);
 
+#if TR_USE_LUA
         // Set up Lua.
-        if (!g_lua_loader.init(autorun_dir))
+        if (!g_lua_loader.init(plugin_dir))
         {
             utl::print_error("Failed to initialize Lua loader.");
             return false;
         }
 
         g_lua_loader.on_load();
+#endif
 
         utl::print_info("Loaded!");
 
@@ -350,8 +355,10 @@ public:
 
     void Unload() noexcept override
     {
+#if TR_USE_LUA
         // Notify scripts of unload.
         g_lua_loader.reset_scripts();
+#endif
 
         g_GetTickInterval_hook = {};
 
@@ -369,31 +376,41 @@ public:
 
     void LevelInit(cstr map_name) noexcept override
     {
+#if TR_USE_LUA
         g_lua_loader.on_level_init(map_name);
+#endif
     }
 
     void ServerActivate(edict_t *edict_list, i32 edict_count, i32 client_max) noexcept override {}
 
     void GameFrame(bool simulating) noexcept override
     {
+#if TR_USE_LUA
         g_lua_loader.on_game_frame(simulating);
+#endif
     }
 
     void LevelShutdown() noexcept override
     {
+#if TR_USE_LUA
         g_lua_loader.on_level_shutdown();
+#endif
     }
 
     void ClientActive(edict_t *edict) noexcept override {}
 
     void ClientDisconnect(edict_t *edict) noexcept override
     {
+#if TR_USE_LUA
         g_lua_loader.on_client_disconnect(edict);
+#endif
     }
 
     void ClientPutInServer(edict_t *edict, cstr player_name) noexcept override
     {
+#if TR_USE_LUA
         g_lua_loader.on_client_spawn(edict, player_name);
+#endif
     }
 
     void SetCommandClient(i32 index) noexcept override {}
@@ -403,9 +420,13 @@ public:
     PLUGIN_RESULT
     ClientConnect(bool *allow_connect, edict_t *edict, cstr name, cstr address, char *reject, i32 max_reject_len) noexcept override
     {
-        auto lua_result = g_lua_loader.on_client_connect(allow_connect, edict, name, address, reject, max_reject_len);
+        auto result = PLUGIN_CONTINUE;
 
-        return lua_result;
+#if TR_USE_LUA
+        result = g_lua_loader.on_client_connect(allow_connect, edict, name, address, reject, max_reject_len);
+#endif
+
+        return result;
     }
 
     PLUGIN_RESULT ClientCommand(edict_t *edict, const CCommand &args) noexcept override

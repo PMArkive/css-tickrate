@@ -16,7 +16,7 @@ public:
     LuaScriptLoader() noexcept = default;
 
     // Initialize the class.
-    bool init(const std::filesystem::path &autorun_dir) noexcept;
+    bool init(const std::filesystem::path &plugin_dir) noexcept;
 
     // Lock all the Lua states.
     void lock() noexcept;
@@ -35,7 +35,7 @@ public:
 
     // Return a state by index. Passing 0 or no arg will return the main state.
     // The main state is always the first entry in the states vector.
-    [[nodiscard]] auto &state(usize index = 0) const noexcept
+    [[nodiscard]] auto state(usize index = 0) const noexcept
     {
         return index == 0 ? m_main_state : m_states[index];
     }
@@ -51,7 +51,7 @@ public:
     void on_client_spawn(edict_t *edict, std::string_view name) noexcept;
 
 private:
-    std::filesystem::path                        m_autorun_dir{};
+    std::filesystem::path                        m_plugin_dir{}, m_autorun_dir{};
     std::shared_ptr<LuaScriptState>              m_main_state{};
     std::vector<std::shared_ptr<LuaScriptState>> m_states{};
     std::recursive_mutex                         m_lua_mutex{};

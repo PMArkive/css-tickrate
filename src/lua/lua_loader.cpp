@@ -1,11 +1,19 @@
 #include "lua_loader.hpp"
 #include "utl.hpp"
 
-bool LuaScriptLoader::init(const std::filesystem::path &autorun_dir) noexcept
+bool LuaScriptLoader::init(const std::filesystem::path &plugin_dir) noexcept
 {
     std::scoped_lock lock{m_lua_mutex};
 
-    m_autorun_dir = autorun_dir;
+    m_plugin_dir  = plugin_dir;
+    m_autorun_dir = m_plugin_dir / "autorun";
+
+    std::error_code ec;
+    if (std::filesystem::create_directories(m_autorun_dir, ec); ec != std::error_code{})
+    {
+        utl::print_error("Failed to create the LUA autorun directory.");
+        return false;
+    }
 
     return true;
 }
@@ -93,7 +101,7 @@ void LuaScriptLoader::reset_scripts() noexcept
     std::error_code ec;
     for (std::filesystem::directory_iterator it{m_autorun_dir, ec}, end{}; it != end && ec == std::error_code{}; it.increment(ec))
     {
-        if (!it->is_regular_file(ec))
+        if (!it->is_regular_file(ec) || ec != std::error_code{})
         {
             continue;
         }

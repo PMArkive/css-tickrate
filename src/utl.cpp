@@ -90,13 +90,23 @@ namespace utl
         if (ZYAN_STATUS_MODULE(status) == ZYAN_MODULE_ZYCORE)
         {
             status = ZYAN_STATUS_CODE(status);
-            return status < strings_zycore.size() ? strings_zycore[status] : "";
+            if (status >= strings_zycore.size())
+            {
+                return {};
+            }
+
+            return strings_zycore[status];
         }
 
         if (ZYAN_STATUS_MODULE(status) == ZYAN_MODULE_ZYDIS)
         {
             status = ZYAN_STATUS_CODE(status);
-            return status < strings_zydis.size() ? strings_zydis[status] : "";
+            if (status >= strings_zycore.size())
+            {
+                return {};
+            }
+
+            return strings_zydis[status];
         }
 
         return {};
@@ -136,13 +146,13 @@ namespace utl
         }
 
         Disasm result{};
-        auto   status = ZydisDecoderDecodeFull(&decoder, ip, len, &result.ix, result.operands);
+        result.ip = ip;
+
+        auto status = ZydisDecoderDecodeFull(&decoder, ip, len, &result.ix, result.operands);
         if (ZYAN_SUCCESS(status) == ZYAN_FALSE)
         {
             return tl::unexpected{Disasm::Error{ip, status}};
         }
-
-        result.ip = ip;
 
         return result;
     }

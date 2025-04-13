@@ -69,7 +69,7 @@ private:
         on_client_connect,
         on_client_disconnect,
         on_client_spawn,
-        max,
+        max, // Not a callback. Used for max amount of elements.
     };
 
     const std::unordered_map<std::string, CallbackID> m_callback_names{

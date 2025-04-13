@@ -1,5 +1,7 @@
-# NOTE: I use Clang-CL on Windows, so I must use this version of CMake.
+# NOTE: I use Clang-CL on Windows and `--install` in CMake, so I must use this version as a minimum.
 cmake_minimum_required(VERSION 3.15)
+
+option(TR_USE_LUA "Exposes a Lua scripting system on the server." OFF)
 
 project(tickrate
     VERSION 1.0.0
@@ -36,21 +38,25 @@ CPMAddPackage(NAME scope_guard
     GITHUB_REPOSITORY ricab/scope_guard
     VERSION 1.1.0
     DOWNLOAD_ONLY ON)
-CPMAddPackage(NAME lua
-    GITHUB_REPOSITORY lua/lua
-    VERSION 5.4.7
-    DOWNLOAD_ONLY YES)
 CPMAddPackage("gh:TartanLlama/expected@1.1.0")
-CPMAddPackage("gh:ThePhD/sol2@3.5.0")
+CPMAddPackage("gh:nlohmann/json@3.12.0")
 
-# Lua has no CMake support, so we create our own target.
-if (lua_ADDED)
-    file(GLOB lua_headers ${lua_SOURCE_DIR}/*.h)
-    file(GLOB lua_sources ${lua_SOURCE_DIR}/*.c)
-    list(REMOVE_ITEM lua_sources ${lua_SOURCE_DIR}/lua.c ${lua_SOURCE_DIR}/luac.c ${lua_SOURCE_DIR}/onelua.c)
-    source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${lua_headers} ${lua_sources})
-    add_library(lua STATIC ${lua_headers} ${lua_sources})
-    target_include_directories(lua PUBLIC $<BUILD_INTERFACE:${lua_SOURCE_DIR}>)
+if (TR_USE_LUA)
+    CPMAddPackage(NAME lua
+        GITHUB_REPOSITORY lua/lua
+        VERSION 5.4.7
+        DOWNLOAD_ONLY YES)
+    CPMAddPackage("gh:ThePhD/sol2@3.5.0")
+
+    # Lua has no CMake support, so we create our own target.
+    if (lua_ADDED)
+        file(GLOB lua_headers ${lua_SOURCE_DIR}/*.h)
+        file(GLOB lua_sources ${lua_SOURCE_DIR}/*.c)
+        list(REMOVE_ITEM lua_sources ${lua_SOURCE_DIR}/lua.c ${lua_SOURCE_DIR}/luac.c ${lua_SOURCE_DIR}/onelua.c)
+        source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${lua_headers} ${lua_sources})
+        add_library(lua STATIC ${lua_headers} ${lua_sources})
+        target_include_directories(lua PUBLIC $<BUILD_INTERFACE:${lua_SOURCE_DIR}>)
+    endif ()
 endif ()
 
 if (scope_guard_ADDED)
@@ -73,16 +79,17 @@ set(tickrate_headers
     src/type.hpp
     src/os.hpp
     src/utl.hpp
-    src/game.hpp
-    src/lua/lua_state.hpp
-    src/lua/lua_loader.hpp)
+    src/game.hpp)
 set(tickrate_sources
     src/os.cpp
     src/utl.cpp
     src/game.cpp
-    src/lua/lua_state.cpp
-    src/lua/lua_loader.cpp
     src/main.cpp)
+
+if (TR_USE_LUA)
+    list(APPEND tickrate_headers src/lua/lua_state.hpp src/lua/lua_loader.hpp)
+    list(APPEND tickrate_sources src/lua/lua_state.cpp src/lua/lua_loader.cpp)
+endif ()
 
 if (WIN32)
     list(APPEND tickrate_sources src/os.windows.cpp)
@@ -95,7 +102,10 @@ endif ()
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR} FILES ${tickrate_headers} ${tickrate_sources})
 add_library(tickrate SHARED ${tickrate_headers} ${tickrate_sources})
 target_compile_features(tickrate PRIVATE cxx_std_17)
-target_compile_definitions(tickrate PRIVATE NOMINMAX SOL_NO_EXCEPTIONS=1 SOL_ALL_SAFETIES_ON=1 SOL_PRINT_ERRORS=0)
+target_compile_definitions(tickrate PRIVATE
+    NOMINMAX
+    TR_USE_LUA=$<IF:$<BOOL:${TR_USE_LUA}>,1,0>
+    $<$<BOOL:${TR_USE_LUA}>:SOL_NO_EXCEPTIONS=1 SOL_ALL_SAFETIES_ON=1 SOL_PRINT_ERRORS=0>)
 target_include_directories(tickrate PRIVATE src)
 target_link_libraries(tickrate
     PRIVATE
@@ -103,14 +113,14 @@ target_link_libraries(tickrate
     scope_guard::scope_guard
     fmt::fmt
     safetyhook::safetyhook
-    sol2::sol2
+    nlohmann_json::nlohmann_json
     Zydis
-    lua)
+    $<$<BOOL:${TR_USE_LUA}>:sol2::sol2 lua>)
 
+# TODO: Add release optimization flags.
 if (WIN32)
     if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
         # Clang-CL
-        # I only have this one filled out because it's my primary compiler on Windows.
         target_compile_options(tickrate
             PRIVATE
             # /clang:-g

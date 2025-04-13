@@ -1,4 +1,5 @@
 #include "lua_state.hpp"
+#include <nlohmann/json.hpp>
 #include "common.hpp"
 #include "utl.hpp"
 #include <cstring>
@@ -9,9 +10,11 @@ sol::object LuaScriptState::s_null_player{};
 
 void lua_panic_handler(sol::optional<std::string> maybe_msg) noexcept
 {
+    utl::print_error("Lua panic! Application will `abort()`.");
+
     if (maybe_msg)
     {
-        utl::print_error("Lua panic occurred:\n{}", *maybe_msg);
+        utl::print_error("\tPanic message: {}", *maybe_msg);
     }
 
     // When this function exits, Lua will exhibit default behavior and `abort()`.
@@ -19,9 +22,9 @@ void lua_panic_handler(sol::optional<std::string> maybe_msg) noexcept
 
 i32 lua_exception_handler(lua_State *L, [[maybe_unused]] sol::optional<const std::exception &> maybe_exception, sol::string_view description) noexcept
 {
-    // state is the lua state, which you can wrap in a state_view if necessary maybe_exception will contain exception, if it exists description will
-    // either be the `what()` of the exception or a description saying that we hit the general-case catch(...).
-    utl::print_error("Lua exception occurred:\n{}", description);
+    // `L` is the lua state, which you can wrap in a state_view if necessary `maybe_exception` will contain an exception. If it exists description
+    // will either be the `what()` of the exception or a description saying that we hit the general-case `catch(...)`.
+    utl::print_error("Lua exception occurred:\n\t{}", description);
 
     // you must push 1 element onto the stack to be transported through as the error object in Lua note that Lua -- and 99.5% of all Lua users and
     // libraries -- expects a string so we push a single string (in our case, the description of the error).
@@ -30,8 +33,7 @@ i32 lua_exception_handler(lua_State *L, [[maybe_unused]] sol::optional<const std
 
 std::string lua_get_file_name(lua_State *L) noexcept
 {
-    // 0 = this func
-    // 1 = lua func
+    // 0 = this func, 1 = lua func
     lua_Debug info;
     if (lua_getstack(L, 1, &info) != 1 || lua_getinfo(L, "Sl", &info) == 0)
     {
@@ -45,6 +47,77 @@ std::string lua_get_file_name(lua_State *L) noexcept
     }
 
     return fmt::format("{}:{}", std::filesystem::path{source.substr(1)}.filename().string(), info.currentline);
+}
+
+sol::object lua_decode_json(sol::this_state L, const nlohmann::json &j) noexcept
+{
+    using value_t = nlohmann::json::value_t;
+
+    switch (j.type())
+    {
+        case value_t::null:
+        {
+            return sol::nil;
+        }
+
+        case value_t::string:
+        {
+            return sol::make_object(L, j.get<std::string_view>());
+        }
+
+        case value_t::boolean:
+        {
+            return sol::make_object(L, j.get<bool>());
+        }
+
+        case value_t::number_integer:
+        {
+            return sol::make_object(L, j.get<i64>());
+        }
+
+        case value_t::number_unsigned:
+        {
+            return sol::make_object(L, j.get<u64>());
+        }
+
+        case value_t::number_float:
+        {
+            return sol::make_object(L, j.get<f64>());
+        }
+
+        // Traverses an object.
+        case value_t::object:
+        {
+            auto table = sol::state_view{L}.create_table();
+
+            for (auto &[k, v] : j.items())
+            {
+                table[k] = lua_decode_json(L, v);
+            }
+
+            return table;
+        }
+
+        // Traverses an array.
+        case value_t::array:
+        {
+            auto table = sol::state_view{L}.create_table();
+
+            for (usize i{}; i < j.size(); ++i)
+            {
+                // LUA indexing starts at 1.
+                table[i + 1] = lua_decode_json(L, j[i]);
+            }
+
+            return table;
+        }
+
+        // Binary (and every other invalid type) is not standard so they will return nil.
+        default:
+        {
+            return sol::nil;
+        }
+    }
 }
 
 template <class... Args>
@@ -95,8 +168,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
     s_null_player = sol::make_object(m_lua, &null_player);
 
     // Create the `tr` table.
-    auto tr_metatable = m_lua.create_table_with();
-
+    auto tr_metatable          = m_lua.create_table();
     tr_metatable["print_info"] = [](sol::this_state L, sol::stack_object value) noexcept
     {
         if (value.is<std::string_view>())
@@ -129,17 +201,18 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
             lua_pop(L, 1);
         }
     };
-    tr_metatable["add_callback"] = [this](sol::this_state L, const std::string &name, sol::stack_object fn) noexcept
+    tr_metatable["add_callback"] = [this](sol::this_state L, sol::stack_object name, sol::stack_object fn) noexcept
     {
-        if (!fn.is<sol::function>())
+        if (!name.is<std::string>() || !fn.is<sol::function>())
         {
             return false;
         }
 
-        auto found_id = str_to_callback_id(name);
+        auto str      = name.as<std::string>();
+        auto found_id = str_to_callback_id(str);
         if (!found_id)
         {
-            lua_print_error(L, "Tried adding a callback that doesn't exist: `{}`.", name);
+            lua_print_error(L, "Tried adding a callback that doesn't exist: `{}`.", str);
             return false;
         }
 
@@ -159,7 +232,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
     m_lua["print"] = tr_metatable["print_info"];
 
     // Create the `tr.players` table.
-    auto players_metatable     = tr_metatable.create_with();
+    auto players_metatable     = tr_metatable.create();
     players_metatable["count"] = [this]() noexcept
     {
         return m_num_players;
@@ -203,11 +276,49 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         lua_print_error(L, "Attempted to write to read-only table `tr.players`!");
     };
 
-    auto players                = tr_metatable.create_named("players");
+    auto players                = tr_metatable.create("players");
     players[sol::metatable_key] = players_metatable;
 
-    // TODO: Reference this for faster lookups and so we don't have to code two constructors for `Player`.
-    // sol::function players_get_fn = players["get"];
+    // Create the `tr.json` table.
+    auto json_metatable           = tr_metatable.create();
+    json_metatable["load_string"] = [](sol::this_state L, sol::stack_object str) noexcept -> std::pair<sol::object, std::string_view>
+    {
+        if (!str.is<std::string_view>())
+        {
+            return std::make_pair(sol::nil, "Invalid string argument");
+        }
+
+        nlohmann::json j;
+        try
+        {
+            j = nlohmann::json::parse(str.as<std::string_view>());
+        }
+        catch (const nlohmann::json::parse_error &e)
+        {
+            return std::make_pair(sol::nil, fmt::format("JSON exception occurred: {}", e.what()));
+        }
+        catch (const std::exception &e)
+        {
+            return std::make_pair(sol::nil, fmt::format("Unknown exception occurred: {}", e.what()));
+        }
+
+        return std::make_pair(lua_decode_json(L, j), "");
+    };
+
+    json_metatable["dump_string"] = [](sol::this_state L, sol::stack_object str) noexcept -> sol::object
+    {
+        return sol::nil;
+    };
+
+    // Protect the `tr.json` table.
+    json_metatable[sol::meta_function::index]     = json_metatable;
+    json_metatable[sol::meta_function::new_index] = [](sol::this_state L)
+    {
+        lua_print_error(L, "Attempted to write to read-only table `tr.json`!");
+    };
+
+    auto json                = tr_metatable.create("json");
+    json[sol::metatable_key] = json_metatable;
 
     // Link userdata pointers.
     tr_metatable["game"] = &g_game;
@@ -219,44 +330,20 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         lua_print_error(L, "Attempted to write to read-only table `tr`!");
     };
 
-    auto tr                = m_lua.create_named_table("tr");
+    auto tr                = m_lua.create_table("tr");
     tr[sol::metatable_key] = tr_metatable;
 
+    // Reference this for faster lookups, and so we don't have to code two identical constructors for `Player`.
+    sol::function players_get_fn = players["get"];
+
     // Create the `Player` userdata.
-    auto player_ud = m_lua.new_usertype<Player>(
+    // TODO: Should player instances be protected with `new_index`?
+    m_lua.new_usertype<Player>(
         "Player",
         sol::meta_function::construct,
-        [this](sol::this_state L, sol::stack_object index) noexcept
-        {
-            if (!index.is<i32>())
-            {
-                return s_null_player;
-            }
-
-            auto *player = get_player(index.as<i32>());
-            if (player == nullptr)
-            {
-                return s_null_player;
-            }
-
-            return sol::make_object(L, player);
-        },
+        [players_get_fn](sol::stack_object index) noexcept { return players_get_fn(index); },
         sol::call_constructor,
-        [this](sol::this_state L, sol::stack_object index) noexcept
-        {
-            if (!index.is<i32>())
-            {
-                return s_null_player;
-            }
-
-            auto *player = get_player(index.as<i32>());
-            if (player == nullptr)
-            {
-                return s_null_player;
-            }
-
-            return sol::make_object(L, player);
-        },
+        [players_get_fn](sol::stack_object index) noexcept { return players_get_fn(index); },
         "valid",
         [](sol::stack_object self) noexcept { return self.is<Player *>() ? self.as<Player *>()->valid() : false; },
         "get_index",
@@ -268,7 +355,7 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         {
             if (!self.is<Player *>())
             {
-                return "";
+                return {};
             }
 
             bool value = true;
@@ -283,18 +370,14 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         [](sol::stack_object self) noexcept { return self.is<Player *>() ? self.as<Player *>()->get_user_id() : -1; });
 
     // Protect the `Player` userdata.
-    auto player_table                               = m_lua.create_named_table("Player");
-    auto player_metatable                           = m_lua.create_table_with();
-    player_metatable[sol::metatable_key]            = player_ud;
-    player_metatable[sol::meta_function::index]     = player_ud;
-    player_metatable[sol::meta_function::new_index] = [](sol::this_state L)
+    auto player_metatable                           = m_lua["Player"][sol::metatable_key];
+    player_metatable[sol::meta_function::new_index] = [](sol::this_state L) noexcept
     {
-        lua_print_error(L, "Attempted to write to read-only usertype `Player`!");
+        lua_print_error(L, "Attempted to write to read-only userdata `Player`!");
     };
-    player_table[sol::metatable_key] = player_metatable;
 
     // Create the `Game` userdata.
-    auto game_ud = m_lua.new_usertype<Game>(
+    m_lua.new_usertype<Game>(
         "Game",
         sol::meta_function::construct,
         sol::no_constructor,
@@ -302,15 +385,11 @@ LuaScriptState::LuaScriptState(bool is_main_state) noexcept : m_is_main_state{is
         [](sol::stack_object self) noexcept { return self.is<Game *>() ? self.as<Game *>()->mod_name : ""; });
 
     // Protect the `Game` userdata.
-    auto game_table                               = m_lua.create_named_table("Game");
-    auto game_metatable                           = m_lua.create_table_with();
-    game_metatable[sol::metatable_key]            = game_ud;
-    game_metatable[sol::meta_function::index]     = game_ud;
-    game_metatable[sol::meta_function::new_index] = [](sol::this_state L)
+    auto game_metatable                           = m_lua["Game"][sol::metatable_key];
+    game_metatable[sol::meta_function::new_index] = [](sol::this_state L) noexcept
     {
-        lua_print_error(L, "Attempted to write to read-only usertype `Game`!");
+        lua_print_error(L, "Attempted to write to read-only userdata `Game`!");
     };
-    game_table[sol::metatable_key] = game_metatable;
 }
 
 LuaScriptState::~LuaScriptState() noexcept
@@ -331,7 +410,18 @@ LuaScriptState::~LuaScriptState() noexcept
 
 [[nodiscard]] Player *LuaScriptState::get_player(i32 index) const noexcept
 {
-    return index >= 1 && (usize)(index - 1) < m_num_players ? (Player *)&m_players[index - 1] : nullptr;
+    if (index < 1 || (usize)index > m_num_players)
+    {
+        return nullptr;
+    }
+
+    auto *player = (Player *)&m_players[index - 1];
+    if (!player->valid())
+    {
+        return nullptr;
+    }
+
+    return player;
 }
 
 [[nodiscard]] Player *LuaScriptState::get_player(edict_t *edict) const noexcept
@@ -456,12 +546,10 @@ LuaScriptState::on_client_connect(
 
     // Add player to cache.
     i32 player_idx = g_game.engine->IndexOfEdict(edict);
-    if (player_idx <= 0 || (usize)player_idx > MAX_PLAYERS)
+    if (player_idx < 1)
     {
         return PLUGIN_STOP;
     }
-
-    ++m_num_players;
 
     if (m_players.size() < (usize)player_idx)
     {
@@ -470,6 +558,12 @@ LuaScriptState::on_client_connect(
 
     auto *player = &m_players[player_idx - 1];
     *player      = Player{edict, name, address};
+    if (!player->valid())
+    {
+        return PLUGIN_STOP;
+    }
+
+    ++m_num_players;
 
     for (auto &&cb : m_callbacks[(usize)CallbackID::on_client_connect])
     {

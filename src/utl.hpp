@@ -18,10 +18,10 @@ namespace utl
     {
         struct Error
         {
+            [[nodiscard]] std::string_view status_str() const noexcept;
+
             u8        *ip{};
             ZyanStatus status{ZYAN_STATUS_FAILED};
-
-            [[nodiscard]] std::string_view status_str() const noexcept;
         };
 
         u8                     *ip{};
